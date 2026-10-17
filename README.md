@@ -25,18 +25,25 @@ downstream code (thresholding, escalation, routing).
 
 ## Layout
 
-| File | Contents |
-|---|---|
-| `src/rlcd/mat.cr` | Minimal dense matrix (`Mat`): vector products, outer-product accumulation |
-| `src/rlcd/policy.cr` | `Policy`: 1-hidden-layer MLP (or linear head with `hidden_dim = 0`), softmax over options, categorical sampling, JSON save/load |
-| `src/rlcd/scoring.cr` | `ScoringRule::LogScore` / `ScoringRule::Brier`, exact logit gradients |
-| `src/rlcd/trainer.cr` | `Trainer`: reward computation, optional GRPO-style policy-gradient term, mini-batch gradient accumulation, LR decay, backprop |
-| `src/rlcd/optimizer.cr` | `Adam` over the policy parameters (mutable learning rate) |
-| `src/rlcd/calibration.cr` | Expected calibration error (ECE), reliability bins, temperature scaling, CSV dump |
-| `src/rlcd/featurizer.cr` | `Decision` record + `Featurizer`: signed hashed bag-of-words over (state, question, criteria) |
-| `src/rlcd/task.cr` | `SyntheticTask`: class-conditional Gaussians with irreducible noise — verifiable labels, nontrivial Bayes error |
-| `src/rlcd/tasks.cr` | `NoulTask` (binary yes/no) + `IntentTask` (multi-class intent): realistic, seeded, verifiable tasks |
-| `src/main.cr` | CLI demo |
+```
+.
+├─╴shard.yml
+├─╴src/
+│  ├─╴main.cr              # CLI demo
+│  ├─╴rlcd.cr              # Shard entry point
+│  ╰─╴rlcd/
+│     ├─╴calibration.cr    # Expected calibration error (ECE), reliability bins, temperature scaling, CSV dump
+│     ├─╴featurizer.cr     # `Decision` record + `Featurizer`: signed hashed bag-of-words over (state, question, criteria)
+│     ├─╴mat.cr            # Minimal dense matrix (`Mat`): vector products, outer-product accumulation
+│     ├─╴optimizer.cr      # `Adam` over the policy parameters (mutable learning rate)
+│     ├─╴policy.cr         # `Policy`: 1-hidden-layer MLP (or linear head with `hidden_dim = 0`), softmax over options, categorical sampling, JSON save/load
+│     ├─╴scoring.cr        # `ScoringRule::LogScore` / `ScoringRule::Brier`, exact logit gradients
+│     ├─╴task.cr           # `SyntheticTask`: class-conditional Gaussians with irreducible noise — verifiable labels, nontrivial Bayes error
+│     ├─╴tasks.cr          # `NoulTask` (binary yes/no) + `IntentTask` (multi-class intent): realistic, seeded, verifiable tasks
+│     ╰─╴trainer.cr        # `Trainer`: reward computation, optional GRPO-style policy-gradient term, mini-batch gradient accumulation, LR decay, backprop
+╰─╴spec/
+   ╰─╴rlcd_spec.cr
+```
 
 ## Usage
 
