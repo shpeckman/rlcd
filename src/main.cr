@@ -54,33 +54,33 @@ rng = Random.new(seed)
 
 case task_name
 when "yesno"
-  t           = Rlcd::NoulTask.new(dim: feat_dim, seed: seed)
-  input_dim   = t.featurizer.dim
+  t            = Rlcd::NoulTask.new(dim: feat_dim, seed: seed)
+  input_dim    = t.featurizer.dim
   option_count = t.option_count
-  sets        = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
-  train_set   = sets[0]
-  val_set     = sets[1]
-  test_set    = sets[2]
+  sets         = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
+  train_set    = sets[0]
+  val_set      = sets[1]
+  test_set     = sets[2]
 when "intent"
-  t           = Rlcd::IntentTask.new(dim: feat_dim, seed: seed)
-  input_dim   = t.featurizer.dim
+  t            = Rlcd::IntentTask.new(dim: feat_dim, seed: seed)
+  input_dim    = t.featurizer.dim
   option_count = t.option_count
-  sets        = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
-  train_set   = sets[0]
-  val_set     = sets[1]
-  test_set    = sets[2]
+  sets         = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
+  train_set    = sets[0]
+  val_set      = sets[1]
+  test_set     = sets[2]
 else
-  t           = Rlcd::SyntheticTask.new(input_dim: 16, class_count: 4, noise: noise, rng: rng)
-  input_dim   = 16
+  t            = Rlcd::SyntheticTask.new(input_dim: 16, class_count: 4, noise: noise, rng: rng)
+  input_dim    = 16
   option_count = 4
-  train_set   = t.generate(train_size)
-  val_set     = t.generate(val_size)
-  test_set    = t.generate(test_size)
+  train_set    = t.generate(train_size)
+  val_set      = t.generate(val_size)
+  test_set     = t.generate(test_size)
 end
 
 policy =
-  if load_path
-    Rlcd::Policy.load(load_path, rng)
+  if lp = load_path
+    Rlcd::Policy.load(lp, rng)
   else
     Rlcd::Policy.new(input_dim: input_dim, hidden_dim: hidden, option_count: option_count, rng: rng)
   end
@@ -111,8 +111,8 @@ puts "Policy-gradient mode-sharpening term: pg-weight=#{pg_weight} (group=#{grou
 puts "Mini-batch=#{batch_size}, lr=#{lr}, lr-decay=#{lr_decay}, hidden=#{hidden}, epochs=#{epochs}"
 puts
 
-if load_path
-  puts "Loaded weights from #{load_path}; skipping training"
+if lp = load_path
+  puts "Loaded weights from #{lp}; skipping training"
 else
   acc0, ece0, _ = evaluate.call(test_set, 1.0)
   puts "Before training: accuracy=#{sprintf("%.3f", acc0)}  ECE=#{sprintf("%.4f", ece0)}"
@@ -134,9 +134,9 @@ else
     puts "  epoch #{sprintf("%4d", stats.epoch)}  sampled-accuracy=#{sprintf("%.3f", stats.accuracy)}  reward=#{sprintf("%.3f", stats.mean_reward)}  score=#{sprintf("%.4f", stats.mean_score)}"
   end
 
-  if save_path
-    policy.save(save_path)
-    puts "Saved weights to #{save_path}"
+  if sp = save_path
+    policy.save(sp)
+    puts "Saved weights to #{sp}"
   end
 end
 
@@ -162,7 +162,7 @@ puts
 puts "Reliability table (held-out#{calibrate ? ", temperature-scaled" : ""}):"
 print_bins.call(bins1)
 
-if cal_csv
-  Rlcd.write_bins_csv(bins1, cal_csv, ece1)
-  puts "Wrote reliability CSV to #{cal_csv}"
+if csv = cal_csv
+  Rlcd.write_bins_csv(bins1, csv, ece1)
+  puts "Wrote reliability CSV to #{csv}"
 end
