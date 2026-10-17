@@ -33,7 +33,7 @@ module Rlcd
     end
 
     private def hash_token(field : UInt64, token : String) : UInt64
-      h = @seed ^ (field * 0x9e3779b97f4a7c15_u64)
+      h = @seed ^ (field &* 0x9e3779b97f4a7c15_u64)
       token.each_byte do |b|
         h ^= b.to_u64
         h &*= 0x100000001b3_u64
