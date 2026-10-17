@@ -73,10 +73,10 @@ scaling on the validation split) reduces ECE further; the text tasks (`--task ye
 
 Mode-sharpening comparison (a tanh MLP at `--noise 2.5`):
 
-| Objective | Accuracy | ECE |
-|---|---|---|
-| RLCD: log-score reward (`--lambda 1`, default) | 0.56 | **0.11** |
-| PG: 0/1 correctness reward (`--lambda 0 --pg-weight 1`) | 0.57 | **0.42** |
+Objective                                               | Accuracy | ECE
+--------------------------------------------------------|----------|---------
+RLCD: log-score reward (`--lambda 1`, default)          | 0.56     | **0.11**
+PG: 0/1 correctness reward (`--lambda 0 --pg-weight 1`) | 0.57     | **0.42**
 
 Same accuracy, but the PG baseline says "99% sure" while being right 58% of the time;
 the proper-scoring-rule model's confidence tracks its actual hit rate.
