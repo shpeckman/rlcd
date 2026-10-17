@@ -26,7 +26,7 @@ downstream code (thresholding, escalation, routing).
 ## Layout
 
 ```
-.
+rlcd/
 ├─╴shard.yml
 ├─╴src/
 │  ├─╴main.cr              # CLI demo
