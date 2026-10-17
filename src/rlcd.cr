@@ -2,5 +2,5 @@
 require "./rlcd/*"
 
 module Rlcd
-  VERSION = "0.1.0"
+  VERSION = {{ `shards version "#{__DIR__}/.."`.chomp.stringify }}
 end

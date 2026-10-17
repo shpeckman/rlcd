@@ -12,13 +12,20 @@ Brier) as the reward against verifiable ground-truth labels. Zero dependencies.
 
 - `src/rlcd.cr` — namespace, `VERSION`, requires everything under `src/rlcd/`
 - `src/rlcd/mat.cr` — `Mat` dense matrix (Slice-backed): `mul_vec`, `t_mul_vec`, `add_outer!`
-- `src/rlcd/policy.cr` — `Policy` MLP (tanh hidden, softmax head) + `Forward` cache record
+- `src/rlcd/policy.cr` — `Policy` MLP (tanh hidden, softmax head; `hidden_dim = 0` = linear
+  head), `param_slices`, JSON `save`/`load`, `Forward` cache record
 - `src/rlcd/scoring.cr` — `ScoringRule` enum, `Rlcd.score`, `Rlcd.score_grad_logits`
 - `src/rlcd/trainer.cr` — `Trainer`: proper-score reward + optional GRPO policy-gradient
-  term (`pg_weight`), backprop, `Example` / `Stats` records
-- `src/rlcd/optimizer.cr` — `Adam` (operates directly on the policy's parameter slices)
-- `src/rlcd/calibration.cr` — `Rlcd.ece` + `Bin` reliability table
+  term (`pg_weight`), mini-batch gradient accumulation, linear LR decay, backprop,
+  `Example` / `Stats` records
+- `src/rlcd/optimizer.cr` — `Adam` (operates on `policy.param_slices`, mutable `lr`)
+- `src/rlcd/calibration.cr` — `Rlcd.ece` + `Bin` reliability table, `Rlcd.fit_temperature` /
+  `Rlcd.temperature_probs`, `Rlcd.write_bins_csv`
+- `src/rlcd/featurizer.cr` — `Decision` record + `Featurizer` signed hashed bag-of-words
+  over (state, question, criteria)
 - `src/rlcd/task.cr` — `SyntheticTask` Gaussian classification with irreducible noise
+- `src/rlcd/tasks.cr` — `NoulTask` (binary yes/no) + `IntentTask` (multi-class intent),
+  `Rlcd.split_examples`
 - `src/main.cr` — CLI demo binary (`rlcd` target)
 - `spec/rlcd_spec.cr` — specs, including finite-difference gradient checks
 
