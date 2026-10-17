@@ -58,10 +58,13 @@ The `yesno` and `intent` tasks run the pipeline end-to-end over natural language
 the same `Policy`/`Trainer`/ECE machinery learns calibrated predictions against the known
 labels.
 
-The demo trains on a synthetic 4-class task with irreducible ambiguity and prints held-out
-accuracy, ECE, and a reliability table (confidence vs. empirical accuracy per bin).
+The demo trains a task with irreducible ambiguity and prints held-out accuracy, ECE, and a
+reliability table (confidence vs. empirical accuracy per bin). The linear head (`--hidden 0`)
+converges to ECE ≈ 0.016 on the default synthetic task, and `--calibrate` (temperature
+scaling on the validation split) reduces ECE further; the text tasks (`--task yesno` /
+`--task intent`) reach near-zero ECE on their seeded, verifiable labels.
 
-Typical result at `--noise 2.5`:
+Mode-sharpening comparison (a tanh MLP at `--noise 2.5`):
 
 | Objective | Accuracy | ECE |
 |---|---|---|
