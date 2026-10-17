@@ -77,16 +77,29 @@ the proper-scoring-rule model's confidence tracks its actual hit rate.
 require "rlcd"
 
 policy  = Rlcd::Policy.new(input_dim: 16, hidden_dim: 32, option_count: 4, rng: Random.new(42))
-trainer = Rlcd::Trainer.new(policy: policy, scoring: Rlcd::ScoringRule::LogScore)
+trainer = Rlcd::Trainer.new(policy: policy, scoring: Rlcd::ScoringRule::LogScore, batch_size: 32)
 trainer.train(examples, epochs: 200) { |stats| puts stats }
 
 probs = policy.probs(features)                       # => [0.7, 0.1, 0.15, 0.05]
 ece, bins = Rlcd.ece(predictions)                    # predictions: Array({Array(Float64), Int32})
+
+featurizer = Rlcd::Featurizer.new(dim: 128)
+features   = featurizer.features(state, question, criteria)
+
+yesno_task = Rlcd::NoulTask.new(seed: 42_u64)
+intent_task = Rlcd::IntentTask.new(seed: 42_u64)
+
+t = Rlcd.fit_temperature(logits, labels)             # temperature scaling on a validation split
+scaled = Rlcd.temperature_probs(logits, t)
+
+policy.save("model.json")
+loaded = Rlcd::Policy.load("model.json")
 ```
 
-`Rlcd::Example` is a `record Example, features : Array(Float64), label : Int32` — in a
-real system the features come from your encoder over (state, question); everything
-downstream of the features is what this shard provides.
+`Rlcd::Example` is a `record Example, features : Array(Float64), label : Int32`. For the
+synthetic task the features are raw Gaussian vectors; for the text tasks they come from a
+`Featurizer` over `(state, question, criteria)` (`Rlcd::Decision`). Everything downstream of
+the features is shared.
 
 ## Development
 
