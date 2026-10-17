@@ -1,0 +1,17 @@
+# shard.yml
+name: rlcd
+version: 0.1.0
+
+authors:
+  - shpeckman
+
+description: |
+   ...
+
+targets:
+  rlcd:
+    main: src/main.cr
+
+crystal: ">= 1.10.0"
+
+license: MIT
