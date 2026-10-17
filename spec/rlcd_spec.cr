@@ -112,3 +112,120 @@ describe Rlcd do
     mean_score.call.should be > before
   end
 end
+
+describe Rlcd::Featurizer do
+  it "is deterministic and normalizes non-empty input" do
+    f = Rlcd::Featurizer.new(dim: 64, seed: 99_u64)
+    a = f.features("The payment failed", "Should I escalate?", "critical severity")
+    b = f.features("The payment failed", "Should I escalate?", "critical severity")
+    a.should eq(b)
+    a.size.should eq(64)
+    norm = Math.sqrt(a.sum { |v| v * v })
+    norm.should be_close(1.0, 1e-9)
+  end
+
+  it "returns a zero vector for empty input" do
+    f = Rlcd::Featurizer.new(dim: 32, seed: 99_u64)
+    f.features("", "", "").all?(&.zero?).should be_true
+  end
+end
+
+describe Rlcd::NoulTask do
+  it "produces binary labeled examples with the featurizer dimension" do
+    task = Rlcd::NoulTask.new(dim: 64, seed: 42_u64)
+    exs  = task.examples
+    exs.size.should be > 0
+    exs.each do |e|
+      (0..1).should contain(e.label)
+      e.features.size.should eq(64)
+    end
+  end
+end
+
+describe Rlcd::IntentTask do
+  it "produces 4-class labeled examples with the featurizer dimension" do
+    task = Rlcd::IntentTask.new(dim: 64, seed: 42_u64)
+    exs  = task.examples
+    exs.size.should be > 0
+    exs.each do |e|
+      (0..3).should contain(e.label)
+      e.features.size.should eq(64)
+    end
+  end
+end
+
+describe "Rlcd::Policy (linear head)" do
+  it "produces a probability distribution" do
+    policy = Rlcd::Policy.new(input_dim: 4, hidden_dim: 0, option_count: 3, rng: Random.new(5))
+    probs  = policy.probs([0.5, -0.2, 0.1, 0.9])
+    probs.sum.should be_close(1.0, 1e-9)
+    probs.each { |p| p.should be > 0.0 }
+  end
+
+  it "improves the proper score on a verifiable task" do
+    rng       = Random.new(12)
+    task      = Rlcd::SyntheticTask.new(input_dim: 8, class_count: 3, noise: 0.8, rng: rng)
+    train_set = task.generate(200)
+    policy    = Rlcd::Policy.new(input_dim: 8, hidden_dim: 0, option_count: 3, rng: rng)
+
+    mean_score = -> do
+      train_set.sum { |e| Rlcd.score(Rlcd::ScoringRule::Brier, policy.probs(e.features), e.label) } / train_set.size
+    end
+
+    before  = mean_score.call
+    trainer = Rlcd::Trainer.new(policy: policy, lr: 0.01, group_size: 8, batch_size: 32, rng: rng)
+    trainer.train(train_set, 30)
+    mean_score.call.should be > before
+  end
+end
+
+describe "Rlcd temperature scaling" do
+  it "returns a positive finite temperature" do
+    rng    = Random.new(13)
+    logits = Array.new(50) { Array.new(3) { rng.next_float * 4.0 - 2.0 } }
+    labels = Array.new(50) { rng.rand(3) }
+    t      = Rlcd.fit_temperature(logits, labels)
+    t.should be > 0.0
+    t.finite?.should be_true
+  end
+
+  it "softens overconfident logits" do
+    logits = [] of Array(Float64)
+    labels = [] of Int32
+    50.times { logits << [10.0, 0.0, 0.0]; labels << 0 }
+    50.times { logits << [10.0, 0.0, 0.0]; labels << 1 }
+    Rlcd.fit_temperature(logits, labels).should be > 1.0
+  end
+end
+
+describe "Rlcd::Policy persistence" do
+  it "save/load round-trips identical probabilities" do
+    policy = Rlcd::Policy.new(input_dim: 4, hidden_dim: 8, option_count: 3, rng: Random.new(9))
+    path   = "/tmp/rlcd_spec_model.json"
+    policy.save(path)
+    loaded = Rlcd::Policy.load(path)
+    x      = [0.5, -0.2, 0.1, 0.9]
+    p1     = policy.probs(x)
+    p2     = loaded.probs(x)
+    p1.size.times { |i| p2[i].should be_close(p1[i], 1e-9) }
+    File.delete(path) if File.exists?(path)
+  end
+end
+
+describe "Rlcd mini-batch training" do
+  it "improves the proper score with batching" do
+    rng       = Random.new(14)
+    task      = Rlcd::SyntheticTask.new(input_dim: 8, class_count: 3, noise: 0.8, rng: rng)
+    train_set = task.generate(200)
+    policy    = Rlcd::Policy.new(input_dim: 8, hidden_dim: 16, option_count: 3, rng: rng)
+
+    mean_score = -> do
+      train_set.sum { |e| Rlcd.score(Rlcd::ScoringRule::Brier, policy.probs(e.features), e.label) } / train_set.size
+    end
+
+    before  = mean_score.call
+    trainer = Rlcd::Trainer.new(policy: policy, lr: 0.01, group_size: 8, batch_size: 64, rng: rng)
+    trainer.train(train_set, 30)
+    mean_score.call.should be > before
+  end
+end
