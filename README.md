@@ -28,12 +28,14 @@ downstream code (thresholding, escalation, routing).
 | File | Contents |
 |---|---|
 | `src/rlcd/mat.cr` | Minimal dense matrix (`Mat`): vector products, outer-product accumulation |
-| `src/rlcd/policy.cr` | `Policy`: 1-hidden-layer MLP, softmax over options, categorical sampling |
+| `src/rlcd/policy.cr` | `Policy`: 1-hidden-layer MLP (or linear head with `hidden_dim = 0`), softmax over options, categorical sampling, JSON save/load |
 | `src/rlcd/scoring.cr` | `ScoringRule::LogScore` / `ScoringRule::Brier`, exact logit gradients |
-| `src/rlcd/trainer.cr` | `Trainer`: reward computation, optional GRPO-style policy-gradient term, backprop |
-| `src/rlcd/optimizer.cr` | `Adam` over the policy parameters |
-| `src/rlcd/calibration.cr` | Expected calibration error (ECE) and reliability bins |
+| `src/rlcd/trainer.cr` | `Trainer`: reward computation, optional GRPO-style policy-gradient term, mini-batch gradient accumulation, LR decay, backprop |
+| `src/rlcd/optimizer.cr` | `Adam` over the policy parameters (mutable learning rate) |
+| `src/rlcd/calibration.cr` | Expected calibration error (ECE), reliability bins, temperature scaling, CSV dump |
+| `src/rlcd/featurizer.cr` | `Decision` record + `Featurizer`: signed hashed bag-of-words over (state, question, criteria) |
 | `src/rlcd/task.cr` | `SyntheticTask`: class-conditional Gaussians with irreducible noise — verifiable labels, nontrivial Bayes error |
+| `src/rlcd/tasks.cr` | `NoulTask` (binary yes/no) + `IntentTask` (multi-class intent): realistic, seeded, verifiable tasks |
 | `src/main.cr` | CLI demo |
 
 ## Usage
@@ -43,9 +45,18 @@ crystal build --release -o bin/rlcd src/main.cr   # mkdir -p bin first
 ./bin/rlcd
 ```
 
-Options: `--epochs`, `--lr`, `--noise`, `--scoring log|brier`, `--lambda` (proper-scoring
-reward weight), `--pg-weight` (sampled-correctness policy-gradient weight, for comparison),
-`--group` (GRPO group size), `--train-size`, `--test-size`, `--seed`, `--hidden`.
+Options: `--task synthetic|yesno|intent`, `--epochs`, `--lr`, `--lr-decay` (linear decay
+fraction), `--batch` (mini-batch size), `--noise`, `--scoring log|brier`, `--lambda`
+(proper-scoring reward weight), `--pg-weight` (sampled-correctness policy-gradient weight,
+for comparison), `--group` (GRPO group size), `--train-size`, `--val-size`, `--test-size`,
+`--feat-dim` (featurizer dimension for the text tasks), `--seed`, `--hidden` (`0` = linear
+head), `--calibrate` (fit temperature on validation split), `--cal-csv PATH` (dump reliability
+bins), `--save PATH`, `--load PATH`.
+
+The `yesno` and `intent` tasks run the pipeline end-to-end over natural language: a
+`Featurizer` turns each `(state, question, criteria)` triple into a fixed-size vector, and
+the same `Policy`/`Trainer`/ECE machinery learns calibrated predictions against the known
+labels.
 
 The demo trains on a synthetic 4-class task with irreducible ambiguity and prints held-out
 accuracy, ECE, and a reliability table (confidence vs. empirical accuracy per bin).
