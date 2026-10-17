@@ -92,7 +92,7 @@ end
 
 evaluate = ->(examples : Array(Rlcd::Example), temp : Float64) do
   predictions = examples.map { |e| {probs_for.call(e.features, temp), e.label} }
-  accuracy = predictions.count { |(probs, label)| probs.index(probs.max) == label }.to_f / predictions.size
+  accuracy    = predictions.count { |(probs, label)| probs.index(probs.max) == label }.to_f / predictions.size
   ece, bins = Rlcd.ece(predictions)
   {accuracy, ece, bins}
 end
@@ -143,8 +143,8 @@ end
 puts
 temperature = 1.0
 if calibrate
-  val_logits = val_set.map { |e| policy.forward(e.features).logits }
-  val_labels = val_set.map { |e| e.label }
+  val_logits  = val_set.map { |e| policy.forward(e.features).logits }
+  val_labels  = val_set.map { |e| e.label }
   temperature = Rlcd.fit_temperature(val_logits, val_labels)
   puts "Fitted temperature T=#{sprintf("%.3f", temperature)} on #{val_set.size} validation examples"
 end

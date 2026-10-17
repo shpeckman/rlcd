@@ -14,11 +14,11 @@ module Rlcd
       @beta2 : Float64 = 0.999,
       @eps   : Float64 = 1e-8,
     )
-      @t = 0
-      @lr = lr
+      @t      = 0
+      @lr     = lr
       @params = policy.param_slices
-      @m = @params.map { |p| Slice(Float64).new(p.size, 0.0) }
-      @v = @params.map { |p| Slice(Float64).new(p.size, 0.0) }
+      @m      = @params.map { |p| Slice(Float64).new(p.size, 0.0) }
+      @v      = @params.map { |p| Slice(Float64).new(p.size, 0.0) }
     end
 
     def lr=(value : Float64) : Nil
