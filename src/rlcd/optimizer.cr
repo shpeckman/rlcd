@@ -2,26 +2,27 @@
 module Rlcd
   class Adam
     @t      : Int32
+    @lr     : Float64
     @params : Array(Slice(Float64))
     @m      : Array(Slice(Float64))
     @v      : Array(Slice(Float64))
 
     def initialize(
       policy : Policy,
-      @lr    : Float64 = 0.005,
+      lr     : Float64 = 0.005,
       @beta1 : Float64 = 0.9,
       @beta2 : Float64 = 0.999,
       @eps   : Float64 = 1e-8,
     )
       @t = 0
-      @params = [
-        policy.w1.data,
-        Slice(Float64).new(policy.b1.to_unsafe, policy.b1.size),
-        policy.w2.data,
-        Slice(Float64).new(policy.b2.to_unsafe, policy.b2.size),
-      ]
+      @lr = lr
+      @params = policy.param_slices
       @m = @params.map { |p| Slice(Float64).new(p.size, 0.0) }
       @v = @params.map { |p| Slice(Float64).new(p.size, 0.0) }
+    end
+
+    def lr=(value : Float64) : Nil
+      @lr = value
     end
 
     def step!(grads : Array(Slice(Float64))) : Nil
