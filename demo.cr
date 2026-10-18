@@ -123,6 +123,44 @@ max_d  = (0...p1.size).max_of { |i| (p1[i] - p2[i]).abs }
 puts "  saved #{path}, reloaded; max |delta prob| = #{sprintf("%.6f", max_d)}"
 File.delete(path) if File.exists?(path)
 
+section "8. Score primitive (ordered levels)"
+score_task = Rlcd::ScoreTask.new(dim: 128, seed: 42_u64)
+sset       = Rlcd.split_examples(score_task.examples, 0.7, 0.15, rng)
+p_score    = Rlcd::Policy.new(input_dim: 128, hidden_dim: 32, option_count: 4, rng: rng)
+Rlcd::Trainer.new(policy: p_score, scoring: Rlcd::ScoringRule::LogScore, rng: rng).train(sset[0], 120)
+sample_probs = p_score.probs(sset[2][0].features)
+mae = sset[2].sum { |e| (Rlcd.expected_score(p_score.probs(e.features)) - e.label).abs } / sset[2].size
+acc, ece, _ = evaluate(p_score, sset[2])
+puts "  levels: #{score_task.legend.join(", ")}"
+puts "  sample probs=#{sample_probs.map { |p| sprintf("%.3f", p) }.join(" ")} -> score #{sprintf("%.3f", Rlcd.expected_score(sample_probs))} (label #{sset[2][0].label})"
+puts "  held-out: accuracy=#{sprintf("%.3f", acc)}  ECE=#{sprintf("%.4f", ece)}  score MAE=#{sprintf("%.3f", mae)}"
+rows << {"score (ordered levels)", acc, ece}
+
+section "9. Confidence & structured state"
+puts "  confidence uniform=#{sprintf("%.3f", Rlcd.confidence([0.25, 0.25, 0.25, 0.25]))}  one-hot=#{sprintf("%.3f", Rlcd.confidence([1.0, 0.0, 0.0, 0.0]))}"
+state = JSON.parse(%q({"ticket": {"subject": "Duplicate charge", "messages": [{"text": "I was charged twice"}]}}))
+f9    = Rlcd::Featurizer.new(dim: 128, seed: 42_u64)
+ref   = f9.features(state, "does `ticket.messages[0].text` request a refund?", "refund")
+lit   = f9.features("ticket: subject: Duplicate charge messages: text: I was charged twice", "does I was charged twice request a refund?", "refund")
+puts "  field-ref features == literal features: #{ref == lit}"
+
+section "10. System One (multiple questions, one state)"
+sys = Rlcd::SystemOne.new(Rlcd::Featurizer.new(dim: 128, seed: 42_u64), {2 => p_yn, 4 => p_int})
+questions = [
+  Rlcd::Question.new("refund_requested", Rlcd::Primitive::Noul, "does the customer request a refund?", ["no", "yes"]),
+  Rlcd::Question.new("department", Rlcd::Primitive::Choice, "which team should handle this?", ["billing", "technical", "sales", "other"]),
+]
+sys.answer("I was charged twice for my last invoice and want my money back", questions).each do |a|
+  case a
+  in Rlcd::NoulAnswer
+    puts "  noul[#{a.id}]=#{sprintf("%.3f", a.noul)}"
+  in Rlcd::ChoiceAnswer
+    puts "  choice[#{a.id}]=#{a.choice}  confidence=#{sprintf("%.3f", a.confidence)}"
+  in Rlcd::ScoreAnswer
+    puts "  score[#{a.id}]=#{sprintf("%.3f", a.score)}  confidence=#{sprintf("%.3f", a.confidence)}"
+  end
+end
+
 section "Summary"
 puts "  #{"scenario".ljust(34)}  accuracy  ECE"
 rows.each do |(name, a, e)|
