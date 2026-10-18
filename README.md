@@ -121,4 +121,5 @@ of the built-in support-desk defaults.
 ```bash
 crystal spec          # gradient checks (finite differences), calibration sanity, training smoke test
 crystal build --release -o bin/rlcd src/main.cr
+crystal run demo.cr   # complete demo suite: every feature, with a side-by-side summary table
 ```
