@@ -14,6 +14,9 @@ module Rlcd
     getter b2           : Array(Float64)
 
     def initialize(@input_dim : Int32, @hidden_dim : Int32, @option_count : Int32, @rng : Random = Random.new)
+      raise ArgumentError.new("input_dim must be positive") if @input_dim <= 0
+      raise ArgumentError.new("option_count must be at least 2") if @option_count < 2
+      raise ArgumentError.new("hidden_dim must be non-negative") if @hidden_dim < 0
       if @hidden_dim == 0
         @w1 = Mat.new(0, @input_dim)
         @b1 = Array(Float64).new(0)

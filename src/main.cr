@@ -131,7 +131,8 @@ else
 
   trainer.train(train_set, epochs) do |stats|
     next unless stats.epoch % (epochs // 5).clamp(1, epochs) == 0 || stats.epoch == 1
-    puts "  epoch #{sprintf("%4d", stats.epoch)}  sampled-accuracy=#{sprintf("%.3f", stats.accuracy)}  reward=#{sprintf("%.3f", stats.mean_reward)}  score=#{sprintf("%.4f", stats.mean_score)}"
+    acc_label = pg_weight > 0.0 ? "sampled-accuracy" : "accuracy"
+    puts "  epoch #{sprintf("%4d", stats.epoch)}  #{acc_label}=#{sprintf("%.3f", stats.accuracy)}  reward=#{sprintf("%.3f", stats.mean_reward)}  score=#{sprintf("%.4f", stats.mean_score)}"
   end
 
   if sp = save_path

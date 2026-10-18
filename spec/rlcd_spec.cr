@@ -229,3 +229,162 @@ describe "Rlcd mini-batch training" do
     mean_score.call.should be > before
   end
 end
+
+describe Rlcd::Mat do
+  it "indexes and mutates values" do
+    m = Rlcd::Mat.new(2, 3)
+    m[0, 1] = 5.0
+    m[1, 2] = -2.5
+    m[0, 1].should eq(5.0)
+    m[1, 2].should eq(-2.5)
+    m[0, 0].should eq(0.0)
+  end
+
+  it "mul_vec computes the matrix-vector product" do
+    m = Rlcd::Mat.new(2, 3)
+    m[0, 0] = 1.0; m[0, 1] = 2.0; m[0, 2] = 3.0
+    m[1, 0] = 4.0; m[1, 1] = 5.0; m[1, 2] = 6.0
+    m.mul_vec([1.0, 10.0, 100.0]).should eq([321.0, 654.0])
+  end
+
+  it "t_mul_vec computes the transposed product" do
+    m = Rlcd::Mat.new(2, 3)
+    m[0, 0] = 1.0; m[0, 1] = 2.0; m[0, 2] = 3.0
+    m[1, 0] = 4.0; m[1, 1] = 5.0; m[1, 2] = 6.0
+    m.t_mul_vec([1.0, 10.0]).should eq([41.0, 52.0, 63.0])
+  end
+
+  it "t_mul_vec_into writes into a reused buffer" do
+    m    = Rlcd::Mat.new(2, 3)
+    m[0, 0] = 1.0; m[0, 1] = 2.0; m[0, 2] = 3.0
+    m[1, 0] = 4.0; m[1, 1] = 5.0; m[1, 2] = 6.0
+    dest = Array(Float64).new(3, 0.0)
+    m.t_mul_vec_into([1.0, 10.0], dest).should eq([41.0, 52.0, 63.0])
+    m.t_mul_vec_into([0.0, 1.0], dest).should eq([4.0, 5.0, 6.0])
+  end
+
+  it "add_outer! accumulates the outer product" do
+    m = Rlcd::Mat.new(2, 2)
+    m.add_outer!([1.0, 2.0], [10.0, 100.0])
+    m.add_outer!([1.0, 2.0], [10.0, 100.0], 0.5)
+    m[0, 0].should eq(15.0)
+    m[0, 1].should eq(150.0)
+    m[1, 0].should eq(30.0)
+    m[1, 1].should eq(300.0)
+  end
+end
+
+describe Rlcd::Adam do
+  it "leaves parameters unchanged on a zero gradient" do
+    rng    = Random.new(30)
+    policy = Rlcd::Policy.new(input_dim: 2, hidden_dim: 3, option_count: 2, rng: rng)
+    adam   = Rlcd::Adam.new(policy, lr: 0.01)
+    before = policy.param_slices.map(&.to_a)
+    grads  = policy.param_slices.map { |s| Slice(Float64).new(s.size, 0.0) }
+    adam.step!(grads)
+    policy.param_slices.each_with_index do |s, i|
+      s.size.times { |j| s[j].should be_close(before[i][j], 1e-12) }
+    end
+  end
+
+  it "descends against a constant gradient" do
+    rng    = Random.new(31)
+    policy = Rlcd::Policy.new(input_dim: 2, hidden_dim: 0, option_count: 2, rng: rng)
+    adam   = Rlcd::Adam.new(policy, lr: 0.01)
+    before = policy.param_slices[0][0]
+    grads  = policy.param_slices.map { |s| Slice(Float64).new(s.size, 1.0) }
+    adam.step!(grads)
+    policy.param_slices[0][0].should be < before
+  end
+end
+
+describe "Rlcd::Trainer backprop" do
+  it "matches finite differences for MLP and linear heads" do
+    {4, 0}.each do |hidden|
+      rng     = Random.new(21 + hidden)
+      policy  = Rlcd::Policy.new(input_dim: 3, hidden_dim: hidden, option_count: 3, rng: rng)
+      trainer = Rlcd::Trainer.new(policy: policy, rng: rng)
+      x       = [0.4, -0.7, 0.2]
+      label   = 1
+      fwd     = policy.forward(x)
+      sgrad   = Rlcd.score_grad_logits(Rlcd::ScoringRule::Brier, fwd.probs, label)
+      dlogits = sgrad.map { |g| -g }
+      acc     = policy.param_slices.map { |s| Array(Float64).new(s.size, 0.0) }
+      trainer.backprop(x, fwd, dlogits, acc)
+
+      eps = 1e-6
+      policy.param_slices.each_with_index do |slice, pi|
+        slice.size.times do |j|
+          orig = slice[j]
+          slice[j] = orig + eps
+          plus  = -Rlcd.score(Rlcd::ScoringRule::Brier, policy.probs(x), label)
+          slice[j] = orig - eps
+          minus = -Rlcd.score(Rlcd::ScoringRule::Brier, policy.probs(x), label)
+          slice[j] = orig
+          acc[pi][j].should be_close((plus - minus) / (2.0 * eps), 1e-5)
+        end
+      end
+    end
+  end
+end
+
+describe "Rlcd::Policy categorical sampling" do
+  it "samples in proportion to the given distribution" do
+    policy = Rlcd::Policy.new(input_dim: 2, hidden_dim: 0, option_count: 3, rng: Random.new(40))
+    counts = [0, 0, 0]
+    3000.times { counts[policy.categorical([0.1, 0.2, 0.7])] += 1 }
+    counts[0].should be_close(300, 80)
+    counts[1].should be_close(600, 100)
+    counts[2].should be_close(2100, 120)
+  end
+end
+
+describe "Rlcd.split_examples" do
+  it "partitions into disjoint, complete splits" do
+    rng      = Random.new(50)
+    examples = Array.new(100) { |i| Rlcd::Example.new([i.to_f], i % 4) }
+    train, val, test = Rlcd.split_examples(examples, 0.7, 0.2, rng)
+    train.size.should eq(70)
+    val.size.should eq(20)
+    test.size.should eq(10)
+    (train + val + test).map(&.features[0]).sort.should eq((0...100).map(&.to_f).sort)
+  end
+end
+
+describe "task determinism" do
+  it "NoulTask is deterministic for a fixed seed" do
+    Rlcd::NoulTask.new(dim: 32, seed: 42_u64).examples.should eq(Rlcd::NoulTask.new(dim: 32, seed: 42_u64).examples)
+  end
+
+  it "IntentTask is deterministic for a fixed seed" do
+    Rlcd::IntentTask.new(dim: 32, seed: 42_u64).examples.should eq(Rlcd::IntentTask.new(dim: 32, seed: 42_u64).examples)
+  end
+end
+
+describe "Rlcd::Policy persistence errors" do
+  it "raises a clear error for truncated saved weights" do
+    path = "/tmp/rlcd_spec_bad_model.json"
+    File.write(path, "{\"input_dim\": 4, \"hidden_dim\": 8, \"option_count\": 3, \"w1\": [0.0], \"b1\": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0], \"w2\": [0.0], \"b2\": [0.0,0.0,0.0]}")
+    expect_raises(ArgumentError) { Rlcd::Policy.load(path) }
+    File.delete(path) if File.exists?(path)
+  end
+end
+
+describe "Rlcd.ece edge cases" do
+  it "returns zero ece and empty bins for no predictions" do
+    ece, bins = Rlcd.ece(Array(Rlcd::Prediction).new)
+    ece.should eq(0.0)
+    bins.size.should eq(10)
+    bins.all?(&.count.zero?).should be_true
+  end
+
+  it "resolves argmax ties to the first maximum" do
+    preds = Array(Rlcd::Prediction).new
+    10.times { preds << {[0.5, 0.5, 0.0], 0} }
+    _, bins = Rlcd.ece(preds)
+    bin = bins[5]
+    bin.count.should eq(10)
+    bin.avg_confidence.should be_close(0.5, 1e-9)
+    bin.accuracy.should be_close(1.0, 1e-9)
+  end
+end
