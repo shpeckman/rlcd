@@ -1,5 +1,5 @@
 # src/rlcd/answer.cr
-module Rlcd
+module RLCD
   record NoulAnswer, id : String, noul : Float64, probabilities : Array(Float64)
   record ChoiceAnswer, id : String, choice : Int32, probabilities : Array(Float64), confidence : Float64
   record ScoreAnswer, id : String, score : Float64, probabilities : Array(Float64), confidence : Float64, legend : Array(String)

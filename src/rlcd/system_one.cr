@@ -1,7 +1,7 @@
 # src/rlcd/system_one.cr
 require "json"
 
-module Rlcd
+module RLCD
   enum Primitive
     Noul
     Choice
@@ -33,9 +33,9 @@ module Rlcd
       in .noul?
         NoulAnswer.new(question.id, probs[1], probs)
       in .choice?
-        ChoiceAnswer.new(question.id, probs.index(probs.max).not_nil!, probs, Rlcd.confidence(probs))
+        ChoiceAnswer.new(question.id, probs.index(probs.max).not_nil!, probs, RLCD.confidence(probs))
       in .score?
-        ScoreAnswer.new(question.id, Rlcd.expected_score(probs), probs, Rlcd.score_confidence(probs), question.criteria)
+        ScoreAnswer.new(question.id, RLCD.expected_score(probs), probs, RLCD.score_confidence(probs), question.criteria)
       end
     end
   end

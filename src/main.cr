@@ -13,7 +13,7 @@ pg_weight          = 0.0
 noise              = 1.5
 hidden             = 32
 seed               = 42_u64
-scoring            = Rlcd::ScoringRule::LogScore
+scoring            = RLCD::ScoringRule::LogScore
 train_size         = 8192
 val_size           = 1024
 test_size          = 512
@@ -41,7 +41,7 @@ OptionParser.parse do |parser|
   parser.on("--hidden N", "Hidden layer size, 0 = linear head (default #{hidden})") { |v| hidden = v.to_i }
   parser.on("--seed N", "RNG seed (default #{seed})") { |v| seed = v.to_u64 }
   parser.on("--scoring NAME", "Proper scoring rule: log | brier (default log)") do |v|
-    scoring = v == "brier" ? Rlcd::ScoringRule::Brier : Rlcd::ScoringRule::LogScore
+    scoring = v == "brier" ? RLCD::ScoringRule::Brier : RLCD::ScoringRule::LogScore
   end
   parser.on("--calibrate", "Fit temperature on validation split, report ECE before/after") { calibrate = true }
   parser.on("--cal-csv PATH", "Dump reliability bins CSV") { |v| cal_csv = v }
@@ -54,31 +54,31 @@ rng = Random.new(seed)
 
 case task_name
 when "yesno"
-  t            = Rlcd::NoulTask.new(dim: feat_dim, seed: seed)
+  t            = RLCD::NoulTask.new(dim: feat_dim, seed: seed)
   input_dim    = t.featurizer.dim
   option_count = t.option_count
-  sets         = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
+  sets         = RLCD.split_examples(t.examples, 0.7, 0.15, rng)
   train_set    = sets[0]
   val_set      = sets[1]
   test_set     = sets[2]
 when "intent"
-  t            = Rlcd::IntentTask.new(dim: feat_dim, seed: seed)
+  t            = RLCD::IntentTask.new(dim: feat_dim, seed: seed)
   input_dim    = t.featurizer.dim
   option_count = t.option_count
-  sets         = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
+  sets         = RLCD.split_examples(t.examples, 0.7, 0.15, rng)
   train_set    = sets[0]
   val_set      = sets[1]
   test_set     = sets[2]
 when "score"
-  t            = Rlcd::ScoreTask.new(dim: feat_dim, seed: seed)
+  t            = RLCD::ScoreTask.new(dim: feat_dim, seed: seed)
   input_dim    = t.featurizer.dim
   option_count = t.option_count
-  sets         = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
+  sets         = RLCD.split_examples(t.examples, 0.7, 0.15, rng)
   train_set    = sets[0]
   val_set      = sets[1]
   test_set     = sets[2]
 else
-  t            = Rlcd::SyntheticTask.new(input_dim: 16, class_count: 4, noise: noise, rng: rng)
+  t            = RLCD::SyntheticTask.new(input_dim: 16, class_count: 4, noise: noise, rng: rng)
   input_dim    = 16
   option_count = 4
   train_set    = t.generate(train_size)
@@ -88,24 +88,24 @@ end
 
 policy =
   if lp = load_path
-    Rlcd::Policy.load(lp, rng)
+    RLCD::Policy.load(lp, rng)
   else
-    Rlcd::Policy.new(input_dim: input_dim, hidden_dim: hidden, option_count: option_count, rng: rng)
+    RLCD::Policy.new(input_dim: input_dim, hidden_dim: hidden, option_count: option_count, rng: rng)
   end
 
 probs_for = ->(features : Array(Float64), temp : Float64) do
   fwd = policy.forward(features)
-  temp == 1.0 ? fwd.probs : Rlcd.temperature_probs(fwd.logits, temp)
+  temp == 1.0 ? fwd.probs : RLCD.temperature_probs(fwd.logits, temp)
 end
 
-evaluate = ->(examples : Array(Rlcd::Example), temp : Float64) do
+evaluate = ->(examples : Array(RLCD::Example), temp : Float64) do
   predictions = examples.map { |e| {probs_for.call(e.features, temp), e.label} }
   accuracy    = predictions.count { |(probs, label)| probs.index(probs.max) == label }.to_f / predictions.size
-  ece, bins = Rlcd.ece(predictions)
+  ece, bins = RLCD.ece(predictions)
   {accuracy, ece, bins}
 end
 
-print_bins = ->(bins : Array(Rlcd::Bin)) do
+print_bins = ->(bins : Array(RLCD::Bin)) do
   puts "  confidence  accuracy   n"
   bins.each do |bin|
     next if bin.count == 0
@@ -125,7 +125,7 @@ else
   acc0, ece0, _ = evaluate.call(test_set, 1.0)
   puts "Before training: accuracy=#{sprintf("%.3f", acc0)}  ECE=#{sprintf("%.4f", ece0)}"
 
-  trainer = Rlcd::Trainer.new(
+  trainer = RLCD::Trainer.new(
     policy: policy,
     lr: lr,
     group_size: group_size,
@@ -154,7 +154,7 @@ temperature = 1.0
 if calibrate
   val_logits  = val_set.map { |e| policy.forward(e.features).logits }
   val_labels  = val_set.map { |e| e.label }
-  temperature = Rlcd.fit_temperature(val_logits, val_labels)
+  temperature = RLCD.fit_temperature(val_logits, val_labels)
   puts "Fitted temperature T=#{sprintf("%.3f", temperature)} on #{val_set.size} validation examples"
 end
 
@@ -172,6 +172,6 @@ puts "Reliability table (held-out#{calibrate ? ", temperature-scaled" : ""}):"
 print_bins.call(bins1)
 
 if csv = cal_csv
-  Rlcd.write_bins_csv(bins1, csv, ece1)
+  RLCD.write_bins_csv(bins1, csv, ece1)
   puts "Wrote reliability CSV to #{csv}"
 end

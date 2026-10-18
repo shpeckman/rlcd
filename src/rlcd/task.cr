@@ -1,5 +1,5 @@
 # src/rlcd/task.cr
-module Rlcd
+module RLCD
   class SyntheticTask
     getter centers : Array(Array(Float64))
 

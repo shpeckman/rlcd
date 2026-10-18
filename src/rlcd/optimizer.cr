@@ -1,5 +1,5 @@
 # src/rlcd/optimizer.cr
-module Rlcd
+module RLCD
   class Adam
     @t      : Int32
     @lr     : Float64

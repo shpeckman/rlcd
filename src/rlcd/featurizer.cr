@@ -1,7 +1,7 @@
 # src/rlcd/featurizer.cr
 require "json"
 
-module Rlcd
+module RLCD
   record Decision, state : String, question : String, criteria : String
 
   class Featurizer

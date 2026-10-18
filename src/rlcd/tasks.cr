@@ -1,5 +1,5 @@
 # src/rlcd/tasks.cr
-module Rlcd
+module RLCD
   class NoulTask
     getter featurizer   : Featurizer
     getter option_count : Int32
