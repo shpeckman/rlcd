@@ -407,3 +407,90 @@ describe "task curated injection" do
     exs[0].label.should eq(2)
   end
 end
+
+describe "Rlcd answer helpers" do
+  it "computes noul/choice confidence" do
+    Rlcd.confidence([0.5, 0.5]).should be_close(0.0, 1e-9)
+    Rlcd.confidence([1.0, 0.0]).should be_close(1.0, 1e-9)
+    Rlcd.confidence([0.7, 0.3]).should be_close(0.4, 1e-9)
+    Rlcd.confidence([0.25, 0.25, 0.25, 0.25]).should be_close(0.0, 1e-9)
+  end
+
+  it "computes the probability-weighted score" do
+    Rlcd.expected_score([0.1, 0.2, 0.3, 0.4]).should be_close(2.0, 1e-9)
+    Rlcd.expected_score([1.0, 0.0, 0.0]).should be_close(0.0, 1e-9)
+  end
+
+  it "computes score confidence" do
+    Rlcd.score_confidence([1.0, 0.0, 0.0, 0.0]).should be_close(1.0, 1e-9)
+    Rlcd.score_confidence([0.25, 0.25, 0.25, 0.25]).should be_close(0.0, 1e-9)
+  end
+end
+
+describe "Rlcd structured state featurization" do
+  it "flattens JSON state and resolves field references" do
+    f     = Rlcd::Featurizer.new(dim: 128, seed: 99_u64)
+    state = JSON.parse(%q({"ticket": {"subject": "Duplicate charge", "messages": [{"text": "I was charged twice"}]}}))
+    ref   = f.features(state, "does `ticket.messages[0].text` request a refund?", "refund")
+    lit   = f.features("ticket: subject: Duplicate charge messages: text: I was charged twice", "does I was charged twice request a refund?", "refund")
+    ref.should eq(lit)
+    ref.size.should eq(128)
+  end
+
+  it "keeps unresolvable field references unchanged" do
+    f     = Rlcd::Featurizer.new(dim: 64, seed: 99_u64)
+    state = JSON.parse(%q({"a": 1}))
+    ref   = f.features(state, "is `nope.missing` here?", "")
+    lit   = f.features("a: 1", "is `nope.missing` here?", "")
+    ref.should eq(lit)
+  end
+end
+
+describe Rlcd::ScoreTask do
+  it "produces ordered-level labeled examples with the featurizer dimension" do
+    task = Rlcd::ScoreTask.new(dim: 64, seed: 42_u64)
+    exs  = task.examples
+    exs.size.should be > 0
+    task.option_count.should eq(4)
+    task.legend.size.should eq(4)
+    exs.each { |e| (0..3).should contain(e.label) }
+  end
+
+  it "accepts injected curated examples" do
+    custom = [{"very angry message", 3}]
+    task = Rlcd::ScoreTask.new(dim: 32, seed: 42_u64, curated: custom)
+    exs = task.examples
+    exs.size.should eq(custom.size + 1600)
+    exs[0].label.should eq(3)
+  end
+end
+
+describe Rlcd::SystemOne do
+  it "answers mixed questions for a shared state" do
+    f  = Rlcd::Featurizer.new(dim: 64, seed: 99_u64)
+    p2 = Rlcd::Policy.new(input_dim: 64, hidden_dim: 8, option_count: 2, rng: Random.new(70))
+    p4 = Rlcd::Policy.new(input_dim: 64, hidden_dim: 8, option_count: 4, rng: Random.new(71))
+    sys = Rlcd::SystemOne.new(f, {2 => p2, 4 => p4})
+    qs = [
+      Rlcd::Question.new("urgent", Rlcd::Primitive::Noul, "Is this urgent?", ["no", "yes"]),
+      Rlcd::Question.new("team", Rlcd::Primitive::Choice, "Which team?", ["billing", "technical", "sales", "other"]),
+    ]
+    answers = sys.answer("The API is down", qs)
+    answers.size.should eq(2)
+    a0 = answers[0].as(Rlcd::NoulAnswer)
+    a0.id.should eq("urgent")
+    a0.noul.should be_close(a0.probabilities[1], 1e-9)
+    a1 = answers[1].as(Rlcd::ChoiceAnswer)
+    a1.id.should eq("team")
+    a1.probabilities.size.should eq(4)
+    a1.choice.should eq(a1.probabilities.index(a1.probabilities.max).not_nil!)
+  end
+
+  it "raises when no policy matches an option count" do
+    f  = Rlcd::Featurizer.new(dim: 64, seed: 99_u64)
+    p2 = Rlcd::Policy.new(input_dim: 64, hidden_dim: 8, option_count: 2, rng: Random.new(72))
+    sys = Rlcd::SystemOne.new(f, {2 => p2})
+    qs  = [Rlcd::Question.new("team", Rlcd::Primitive::Choice, "Which team?", ["a", "b", "c"])]
+    expect_raises(ArgumentError) { sys.answer("state", qs) }
+  end
+end
