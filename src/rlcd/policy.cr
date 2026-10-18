@@ -81,15 +81,13 @@ module Rlcd
 
       copy = ->(any : JSON::Any, slice : Slice(Float64)) do
         vals = any.as_a
+        raise ArgumentError.new("saved weights length #{vals.size} does not match expected #{slice.size}") if vals.size != slice.size
         slice.size.times { |i| slice[i] = vals[i].as_f }
       end
       copy.call(data["w1"], policy.w1.data)
       copy.call(data["w2"], policy.w2.data)
-
-      b1 = data["b1"].as_a
-      policy.b1.size.times { |i| policy.b1[i] = b1[i].as_f }
-      b2 = data["b2"].as_a
-      policy.b2.size.times { |i| policy.b2[i] = b2[i].as_f }
+      copy.call(data["b1"], Slice(Float64).new(policy.b1.to_unsafe, policy.b1.size))
+      copy.call(data["b2"], Slice(Float64).new(policy.b2.to_unsafe, policy.b2.size))
       policy
     end
 
