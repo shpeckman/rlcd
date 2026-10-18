@@ -25,7 +25,7 @@ load_path          = nil.as(String?)
 
 OptionParser.parse do |parser|
   parser.banner = "Usage: rlcd [options]"
-  parser.on("--task NAME", "Task: synthetic | yesno | intent (default #{task_name})") { |v| task_name = v }
+  parser.on("--task NAME", "Task: synthetic | yesno | intent | score (default #{task_name})") { |v| task_name = v }
   parser.on("--epochs N", "Training epochs (default #{epochs})") { |v| epochs = v.to_i }
   parser.on("--group N", "GRPO group size (default #{group_size})") { |v| group_size = v.to_i }
   parser.on("--batch N", "Mini-batch size (default #{batch_size})") { |v| batch_size = v.to_i }
@@ -63,6 +63,14 @@ when "yesno"
   test_set     = sets[2]
 when "intent"
   t            = Rlcd::IntentTask.new(dim: feat_dim, seed: seed)
+  input_dim    = t.featurizer.dim
+  option_count = t.option_count
+  sets         = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)
+  train_set    = sets[0]
+  val_set      = sets[1]
+  test_set     = sets[2]
+when "score"
+  t            = Rlcd::ScoreTask.new(dim: feat_dim, seed: seed)
   input_dim    = t.featurizer.dim
   option_count = t.option_count
   sets         = Rlcd.split_examples(t.examples, 0.7, 0.15, rng)

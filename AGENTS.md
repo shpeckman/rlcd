@@ -11,6 +11,8 @@ Brier) as the reward against verifiable ground-truth labels. Zero dependencies.
 ## Layout
 
 - `src/rlcd.cr` — namespace, `VERSION`, requires everything under `src/rlcd/`
+- `src/rlcd/answer.cr` — `NoulAnswer` / `ChoiceAnswer` / `ScoreAnswer` records and
+  `Rlcd.confidence` / `Rlcd.expected_score` / `Rlcd.score_confidence`
 - `src/rlcd/mat.cr` — `Mat` dense matrix (Slice-backed): `mul_vec`, `t_mul_vec`, `add_outer!`
 - `src/rlcd/policy.cr` — `Policy` MLP (tanh hidden, softmax head; `hidden_dim = 0` = linear
   head), `param_slices`, JSON `save`/`load`, `Forward` cache record
@@ -22,11 +24,14 @@ Brier) as the reward against verifiable ground-truth labels. Zero dependencies.
 - `src/rlcd/calibration.cr` — `Rlcd.ece` + `Bin` reliability table, `Rlcd.fit_temperature` /
   `Rlcd.temperature_probs`, `Rlcd.write_bins_csv`
 - `src/rlcd/featurizer.cr` — `Decision` record + `Featurizer` signed hashed bag-of-words
-  over (state, question, criteria)
+  over (state, question, criteria); structured JSON state + backtick field references
+- `src/rlcd/system_one.cr` — `Primitive` enum, `Question` record, `SystemOne` (many typed
+  questions answered against one state)
 - `src/rlcd/task.cr` — `SyntheticTask` Gaussian classification with irreducible noise
-- `src/rlcd/tasks.cr` — `NoulTask` (binary yes/no) + `IntentTask` (multi-class intent),
-  `Rlcd.split_examples`
+- `src/rlcd/tasks.cr` — `NoulTask` (yes/no) + `IntentTask` (choice) + `ScoreTask` (ordered
+  levels), `Rlcd.split_examples`
 - `src/main.cr` — CLI demo binary (`rlcd` target)
+- `demo.cr` — comprehensive demo suite
 - `spec/rlcd_spec.cr` — specs, including finite-difference gradient checks
 
 ## Commands
