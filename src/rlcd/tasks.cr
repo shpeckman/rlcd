@@ -9,7 +9,7 @@ module Rlcd
     @criteria  : Array(String)
     @curated   : Array(Tuple(String, Int32))
 
-    def initialize(@dim : Int32 = 128, @seed : UInt64 = 42_u64)
+    def initialize(@dim : Int32 = 128, @seed : UInt64 = 42_u64, curated : Array(Tuple(String, Int32))? = nil)
       @featurizer   = Featurizer.new(dim: @dim, seed: @seed)
       @option_count = 2
       @rng          = Random.new(@seed)
@@ -22,7 +22,7 @@ module Rlcd
         "Escalate to tier-2 when severity is critical, when severity is high and more than 20 users are affected, or when a security or data-loss issue is reported.",
         "Tier-2 policy: escalate on critical severity, on high severity with over 20 affected users, or on any security/data-loss keyword.",
       ]
-      @curated = [
+      @curated = curated || [
         {"Payments are failing for hundreds of users across the EU region", 1},
         {"A single user cannot reset their password",                       0},
         {"Login is completely down for every account since 9am",            1},
@@ -114,7 +114,7 @@ module Rlcd
     @criteria  : Array(String)
     @curated   : Array(Tuple(String, Int32))
 
-    def initialize(@dim : Int32 = 128, @seed : UInt64 = 42_u64)
+    def initialize(@dim : Int32 = 128, @seed : UInt64 = 42_u64, curated : Array(Tuple(String, Int32))? = nil)
       @featurizer   = Featurizer.new(dim: @dim, seed: @seed)
       @option_count = 4
       @rng          = Random.new(@seed)
@@ -125,7 +125,7 @@ module Rlcd
       @criteria = [
         "Intents: billing = invoices, charges, payments; refund = money-back, reimbursement; account = login, password, access; technical = crash, bug, malfunction.",
       ]
-      @curated = [
+      @curated = curated || [
         {"I was charged twice for my last invoice",                       0},
         {"Can I get my money back for this order?",                       1},
         {"I cannot log in after resetting my password",                   2},

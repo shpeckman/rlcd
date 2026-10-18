@@ -5,6 +5,13 @@ module Rlcd
   record Stats, epoch : Int32, accuracy : Float64, mean_reward : Float64, mean_score : Float64
 
   class Trainer
+    @dlogits : Array(Float64)
+    @sgrad   : Array(Float64)
+    @dh      : Array(Float64)
+    @dz1     : Array(Float64)
+    @gw1     : Mat
+    @gw2     : Mat
+
     def initialize(
       @policy              : Policy,
       @lr                  : Float64     = 0.005,
@@ -18,6 +25,19 @@ module Rlcd
       @rng                 : Random      = Random.new,
     )
       @adam = Adam.new(@policy, lr: @lr)
+      @dlogits = Array(Float64).new(@policy.option_count, 0.0)
+      @sgrad   = Array(Float64).new(@policy.option_count, 0.0)
+      if @policy.hidden_dim == 0
+        @gw1 = Mat.new(0, 0)
+        @gw2 = Mat.new(@policy.option_count, @policy.input_dim)
+        @dh  = Array(Float64).new(0)
+        @dz1 = Array(Float64).new(0)
+      else
+        @gw1 = Mat.new(@policy.hidden_dim, @policy.input_dim)
+        @gw2 = Mat.new(@policy.option_count, @policy.hidden_dim)
+        @dh  = Array(Float64).new(@policy.hidden_dim, 0.0)
+        @dz1 = Array(Float64).new(@policy.hidden_dim, 0.0)
+      end
     end
 
     def train(examples : Array(Example), epochs : Int32, & : Stats ->) : Nil
@@ -45,39 +65,43 @@ module Rlcd
         fwd   = @policy.forward(example.features)
         probs = fwd.probs
         label = example.label
+        n     = probs.size
+        sc    = Rlcd.score(@scoring, probs, label)
 
-        actions = Array(Int32).new(@group_size)
-        rewards = Array(Float64).new(@group_size)
-        @group_size.times do |i|
-          a = @policy.categorical(probs)
-          actions << a
-          rewards << (a == label ? 1.0 : 0.0)
-        end
-
-        mean = rewards.sum / @group_size
-        std  = Math.sqrt(rewards.sum { |r| (r - mean) ** 2 } / @group_size)
-        advantages = rewards.map do |r|
-          adv = r - mean
-          (@normalize_advantage && std > 1e-8) ? adv / std : adv
-        end
-
-        n       = probs.size
-        dlogits = Array(Float64).new(n, 0.0)
+        @dlogits.fill(0.0)
         if @pg_weight > 0.0
-          @group_size.times do |i|
-            adv = advantages[i] / @group_size
-            a   = actions[i]
-            n.times { |k| dlogits[k] -= @pg_weight * adv * ((k == a ? 1.0 : 0.0) - probs[k]) }
+          actions = Array(Int32).new(@group_size)
+          rewards = Array(Float64).new(@group_size)
+          @group_size.times do
+            a = @policy.categorical(probs)
+            actions << a
+            rewards << (a == label ? 1.0 : 0.0)
           end
+
+          mean = rewards.sum / @group_size
+          std  = Math.sqrt(rewards.sum { |r| (r - mean) ** 2 } / @group_size)
+          @group_size.times do |i|
+            adv = rewards[i] - mean
+            adv /= std if @normalize_advantage && std > 1e-8
+            a = actions[i]
+            n.times { |k| @dlogits[k] -= @pg_weight * (adv / @group_size) * ((k == a ? 1.0 : 0.0) - probs[k]) }
+          end
+
+          rewards.each do |r|
+            correct += 1 if r == 1.0
+            reward_sum += r
+            total += 1
+          end
+        else
+          correct += 1 if probs.index(probs.max) == label
+          reward_sum += sc
+          total += 1
         end
 
-        sgrad = Rlcd.score_grad_logits(@scoring, probs, label)
-        n.times { |k| dlogits[k] -= @calibration_weight * sgrad[k] }
+        Rlcd.score_grad_logits(@scoring, probs, label, @sgrad)
+        n.times { |k| @dlogits[k] -= @calibration_weight * @sgrad[k] }
 
-        grads = backprop(example.features, fwd, dlogits)
-        grads.each_with_index do |g, i|
-          g.size.times { |j| acc[i][j] += g[j] }
-        end
+        backprop(example.features, fwd, @dlogits, acc)
         batch_count += 1
 
         if batch_count >= @batch_size
@@ -86,12 +110,7 @@ module Rlcd
           batch_count = 0
         end
 
-        rewards.each do |r|
-          correct += 1 if r == 1.0
-          reward_sum += r
-          total += 1
-        end
-        score_sum += Rlcd.score(@scoring, probs, label)
+        score_sum += sc
       end
 
       if batch_count > 0
@@ -106,19 +125,26 @@ module Rlcd
       )
     end
 
-    def backprop(x : Array(Float64), fwd : Forward, dlogits : Array(Float64)) : Array(Array(Float64))
+    def backprop(x : Array(Float64), fwd : Forward, dlogits : Array(Float64), acc : Array(Array(Float64))) : Nil
       if @policy.hidden_dim == 0
-        gw2 = Mat.new(@policy.option_count, @policy.input_dim)
-        gw2.add_outer!(dlogits, x)
-        [gw2.data.to_a, dlogits]
+        @gw2.data.fill(0.0)
+        @gw2.add_outer!(dlogits, x)
+        @gw2.data.each_with_index { |v, i| acc[0][i] += v }
+        @policy.option_count.times { |i| acc[1][i] += dlogits[i] }
       else
-        gw2 = Mat.new(@policy.option_count, @policy.hidden_dim)
-        gw2.add_outer!(dlogits, fwd.hidden)
-        dh  = @policy.w2.t_mul_vec(dlogits)
-        dz1 = Array(Float64).new(@policy.hidden_dim) { |i| dh[i] * (1.0 - fwd.hidden[i] ** 2) }
-        gw1 = Mat.new(@policy.hidden_dim, @policy.input_dim)
-        gw1.add_outer!(dz1, x)
-        [gw1.data.to_a, dz1, gw2.data.to_a, dlogits]
+        @gw2.data.fill(0.0)
+        @gw2.add_outer!(dlogits, fwd.hidden)
+        @gw2.data.each_with_index { |v, i| acc[2][i] += v }
+
+        @policy.w2.t_mul_vec_into(dlogits, @dh)
+        @policy.hidden_dim.times { |i| @dz1[i] = @dh[i] * (1.0 - fwd.hidden[i] ** 2) }
+
+        @gw1.data.fill(0.0)
+        @gw1.add_outer!(@dz1, x)
+        @gw1.data.each_with_index { |v, i| acc[0][i] += v }
+
+        @policy.hidden_dim.times { |i| acc[1][i] += @dz1[i] }
+        @policy.option_count.times { |i| acc[3][i] += dlogits[i] }
       end
     end
 

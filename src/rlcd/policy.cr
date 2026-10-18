@@ -14,6 +14,9 @@ module Rlcd
     getter b2           : Array(Float64)
 
     def initialize(@input_dim : Int32, @hidden_dim : Int32, @option_count : Int32, @rng : Random = Random.new)
+      raise ArgumentError.new("input_dim must be positive") if @input_dim <= 0
+      raise ArgumentError.new("option_count must be at least 2") if @option_count < 2
+      raise ArgumentError.new("hidden_dim must be non-negative") if @hidden_dim < 0
       if @hidden_dim == 0
         @w1 = Mat.new(0, @input_dim)
         @b1 = Array(Float64).new(0)
@@ -78,15 +81,13 @@ module Rlcd
 
       copy = ->(any : JSON::Any, slice : Slice(Float64)) do
         vals = any.as_a
+        raise ArgumentError.new("saved weights length #{vals.size} does not match expected #{slice.size}") if vals.size != slice.size
         slice.size.times { |i| slice[i] = vals[i].as_f }
       end
       copy.call(data["w1"], policy.w1.data)
       copy.call(data["w2"], policy.w2.data)
-
-      b1 = data["b1"].as_a
-      policy.b1.size.times { |i| policy.b1[i] = b1[i].as_f }
-      b2 = data["b2"].as_a
-      policy.b2.size.times { |i| policy.b2[i] = b2[i].as_f }
+      copy.call(data["b1"], Slice(Float64).new(policy.b1.to_unsafe, policy.b1.size))
+      copy.call(data["b2"], Slice(Float64).new(policy.b2.to_unsafe, policy.b2.size))
       policy
     end
 

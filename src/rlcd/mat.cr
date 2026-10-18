@@ -47,6 +47,16 @@ module Rlcd
       result
     end
 
+    def t_mul_vec_into(x : Array(Float64), dest : Array(Float64)) : Array(Float64)
+      dest.fill(0.0)
+      @rows.times do |r|
+        base = r * @cols
+        v    = x[r]
+        @cols.times { |c| dest[c] += @data[base + c] * v }
+      end
+      dest
+    end
+
     def add_outer!(a : Array(Float64), b : Array(Float64), scale : Float64 = 1.0)
       @rows.times do |r|
         base = r * @cols

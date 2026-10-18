@@ -6,6 +6,7 @@ module Rlcd
     getter dim : Int32
 
     def initialize(@dim : Int32 = 128, @seed : UInt64 = 0xcbf29ce484222325_u64)
+      raise ArgumentError.new("dim must be positive") if @dim <= 0
     end
 
     def features(decision : Decision) : Array(Float64)

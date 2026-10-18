@@ -20,17 +20,22 @@ module Rlcd
   end
 
   def self.score_grad_logits(rule : ScoringRule, probs : Array(Float64), label : Int32) : Array(Float64)
+    score_grad_logits(rule, probs, label, Array(Float64).new(probs.size, 0.0))
+  end
+
+  def self.score_grad_logits(rule : ScoringRule, probs : Array(Float64), label : Int32, grad : Array(Float64)) : Array(Float64)
     n = probs.size
     case rule
     in .log_score?
-      Array(Float64).new(n) { |k| (k == label ? 1.0 : 0.0) - probs[k] }
+      n.times { |k| grad[k] = (k == label ? 1.0 : 0.0) - probs[k] }
     in .brier?
       dot = 0.0
       n.times { |j| dot += probs[j] * (probs[j] - (j == label ? 1.0 : 0.0)) }
-      Array(Float64).new(n) do |k|
+      n.times do |k|
         yk = k == label ? 1.0 : 0.0
-        -2.0 * probs[k] * ((probs[k] - yk) - dot)
+        grad[k] = -2.0 * probs[k] * ((probs[k] - yk) - dot)
       end
     end
+    grad
   end
 end
