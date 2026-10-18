@@ -1,0 +1,20 @@
+# .github/workflows/api_diff.yml
+name: API diff
+
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  api-diff:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+
+      - name: Diff bindings against the newest llvmorg tag
+        run: crystal scripts/api_diff.cr

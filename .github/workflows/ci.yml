@@ -1,0 +1,31 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  spec:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["18", "19", "20", "21", "22", "23"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+
+      - name: Install LLVM ${{ matrix.llvm }}
+        run: |
+          wget -O - https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ matrix.llvm }}
+          sudo apt-get install -y llvm-${{ matrix.llvm }}-dev
+
+      - name: Run specs
+        env:
+          LLVM_CONFIG: llvm-config-${{ matrix.llvm }}
+        run: crystal spec
