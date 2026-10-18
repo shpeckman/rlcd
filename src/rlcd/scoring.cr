@@ -1,5 +1,5 @@
 # src/rlcd/scoring.cr
-module Rlcd
+module RLCD
   enum ScoringRule
     LogScore
     Brier

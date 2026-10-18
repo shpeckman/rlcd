@@ -1,7 +1,7 @@
 # src/rlcd/policy.cr
 require "json"
 
-module Rlcd
+module RLCD
   record Forward, hidden : Array(Float64), logits : Array(Float64), probs : Array(Float64)
 
   class Policy

@@ -1,5 +1,5 @@
 # src/rlcd/tasks.cr
-module Rlcd
+module RLCD
   class NoulTask
     getter featurizer   : Featurizer
     getter option_count : Int32
@@ -189,6 +189,72 @@ module Rlcd
         intent = @rng.rand(4)
         phrase = phrases[intent][@rng.rand(phrases[intent].size)]
         result << {"Customer message: #{phrase}", intent}
+      end
+      result
+    end
+  end
+
+  class ScoreTask
+    getter featurizer   : Featurizer
+    getter option_count : Int32
+    getter legend       : Array(String)
+
+    @rng       : Random
+    @questions : Array(String)
+    @criteria  : Array(String)
+    @curated   : Array(Tuple(String, Int32))
+
+    def initialize(@dim : Int32 = 128, @seed : UInt64 = 42_u64, curated : Array(Tuple(String, Int32))? = nil)
+      @featurizer   = Featurizer.new(dim: @dim, seed: @seed)
+      @option_count = 4
+      @legend       = ["calm", "mild", "frustrated", "angry"]
+      @rng          = Random.new(@seed)
+      @questions = [
+        "How frustrated is the customer?",
+        "What level of frustration does this message convey?",
+      ]
+      @criteria = [
+        "0: calm, just stating facts; 1: mild concern; 2: frustrated; 3: very angry with strong language",
+      ]
+      @curated = curated || [
+        {"I think there might be a small issue with my invoice, could you take a look?", 1},
+        {"This is completely unacceptable, I want my money back right now!", 3},
+        {"Thanks for the quick response, everything is working now.", 0},
+        {"I have been waiting three days and nobody has replied, this is getting frustrating.", 2},
+        {"Just a quick question about the new plan.", 0},
+        {"Your service is a joke, I am done with you people.", 3},
+      ]
+    end
+
+    def examples : Array(Example)
+      result = Array(Example).new(@curated.size + 1600)
+      @curated.each_with_index do |(state, label), i|
+        result << make_example(state, @questions[i % @questions.size], @criteria[i % @criteria.size], label)
+      end
+      generate_templates.each do |(state, label)|
+        result << make_example(state, @questions[@rng.rand(@questions.size)], @criteria[@rng.rand(@criteria.size)], label)
+      end
+      result
+    end
+
+    private def make_example(state : String, question : String, criteria : String, label : Int32) : Example
+      Example.new(@featurizer.features(state, question, criteria), label)
+    end
+
+    private def generate_templates : Array(Tuple(String, Int32))
+      result = Array(Tuple(String, Int32)).new(1600)
+      phrases = {
+        0 => ["quick question", "just checking", "thank you", "everything works", "no rush", "whenever you can"],
+        1 => ["a bit concerned", "could you look into", "minor issue", "slightly worried", "not urgent but"],
+        2 => ["very frustrated", "been waiting for days", "this is unacceptable", "no one has replied", "getting annoyed"],
+        3 => ["completely unacceptable", "want my money back now", "worst service ever", "i am done", "absolutely furious"],
+      }
+      subjects = ["my order", "my invoice", "my account", "the app", "my subscription"]
+
+      1600.times do
+        level  = @rng.rand(4)
+        phrase = phrases[level][@rng.rand(phrases[level].size)]
+        result << {"Customer message: #{phrase} about #{subjects[@rng.rand(subjects.size)]}", level}
       end
       result
     end

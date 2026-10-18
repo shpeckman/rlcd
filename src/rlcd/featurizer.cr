@@ -1,5 +1,7 @@
 # src/rlcd/featurizer.cr
-module Rlcd
+require "json"
+
+module RLCD
   record Decision, state : String, question : String, criteria : String
 
   class Featurizer
@@ -22,6 +24,10 @@ module Rlcd
       norm > 1e-12 ? vec.map { |v| v / norm } : vec
     end
 
+    def features(state : JSON::Any, question : String, criteria : String) : Array(Float64)
+      features(flatten_json(state), resolve_refs(question, state), resolve_refs(criteria, state))
+    end
+
     private def tokenize(text : String) : Array(String)
       text.downcase.split(/[^a-z0-9]+/).reject { |t| t.size < 2 }
     end
@@ -40,6 +46,56 @@ module Rlcd
         h &*= 0x100000001b3_u64
       end
       h
+    end
+
+    private def flatten_json(node : JSON::Any) : String
+      case node.raw
+      when String  then node.as_s
+      when Int64   then node.as_i.to_s
+      when Float64 then node.as_f.to_s
+      when Bool    then node.as_bool.to_s
+      when Nil     then ""
+      when Array   then node.as_a.map { |e| flatten_json(e) }.join(" ")
+      when Hash    then node.as_h.map { |k, v| "#{k}: #{flatten_json(v)}" }.join(" ")
+      else              node.to_s
+      end
+    end
+
+    private def resolve_refs(text : String, state : JSON::Any) : String
+      builder = String::Builder.new
+      pos     = 0
+      text.scan(/`[^`]+`/) do |m|
+        start_i = m.begin(0)
+        end_i   = m.end(0)
+        builder << text[pos...start_i]
+        inner   = text[(start_i + 1)...(end_i - 1)]
+        value   = resolve_path(state, inner)
+        builder << (value ? flatten_json(value) : text[start_i...end_i])
+        pos = end_i
+      end
+      builder << text[pos..]
+      builder.to_s
+    end
+
+    private def resolve_path(node : JSON::Any, path : String) : JSON::Any?
+      current = node
+      path.tr("[]", "..").split('.').reject(&.empty?).each do |key|
+        case current.raw
+        when Hash
+          h = current.as_h
+          return nil unless h.has_key?(key)
+          current = h[key]
+        when Array
+          i = key.to_i?
+          return nil if i.nil?
+          arr = current.as_a
+          return nil if i < 0 || i >= arr.size
+          current = arr[i]
+        else
+          return nil
+        end
+      end
+      current
     end
   end
 end

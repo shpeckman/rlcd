@@ -1,5 +1,5 @@
 # src/rlcd/trainer.cr
-module Rlcd
+module RLCD
   record Example, features : Array(Float64), label : Int32
 
   record Stats, epoch : Int32, accuracy : Float64, mean_reward : Float64, mean_score : Float64
@@ -66,7 +66,7 @@ module Rlcd
         probs = fwd.probs
         label = example.label
         n     = probs.size
-        sc    = Rlcd.score(@scoring, probs, label)
+        sc    = RLCD.score(@scoring, probs, label)
 
         @dlogits.fill(0.0)
         if @pg_weight > 0.0
@@ -98,7 +98,7 @@ module Rlcd
           total += 1
         end
 
-        Rlcd.score_grad_logits(@scoring, probs, label, @sgrad)
+        RLCD.score_grad_logits(@scoring, probs, label, @sgrad)
         n.times { |k| @dlogits[k] -= @calibration_weight * @sgrad[k] }
 
         backprop(example.features, fwd, @dlogits, acc)

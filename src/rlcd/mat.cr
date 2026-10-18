@@ -1,5 +1,5 @@
 # src/rlcd/mat.cr
-module Rlcd
+module RLCD
   struct Mat
     getter rows : Int32
     getter cols : Int32

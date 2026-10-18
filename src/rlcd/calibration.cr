@@ -1,5 +1,5 @@
 # src/rlcd/calibration.cr
-module Rlcd
+module RLCD
   alias Prediction = Tuple(Array(Float64), Int32)
 
   record Bin, lower : Float64, upper : Float64, count : Int32, avg_confidence : Float64, accuracy : Float64 do

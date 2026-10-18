@@ -7,6 +7,10 @@ RLCD-style reinforcement learning in pure Crystal: training a decision model to 
 
 No dependencies. No FFI. The model, backprop, optimizer, and evaluation are all in `src/`.
 
+This is the same idea behind TypeSafe AI's **Jev** "System One" model and its training
+method, **RLCD** (Reinforcement Learning for Calibrated Decisions): unstructured state in,
+typed probabilistic decisions out, with confidence that tracks accuracy.
+
 ## The idea
 
 An LLM-style policy that generates text and gets a 0/1 correctness reward (plain RLVR)
@@ -27,19 +31,22 @@ downstream code (thresholding, escalation, routing).
 
 ```
 rlcd/
+├─╴demo.cr              # complete demo suite: every feature, with a summary table
 ├─╴shard.yml
 ├─╴src/
 │  ├─╴main.cr              # CLI demo
 │  ├─╴rlcd.cr              # Shard entry point
 │  ╰─╴rlcd/
+│     ├─╴answer.cr         # NoulAnswer / ChoiceAnswer / ScoreAnswer + confidence & score helpers
 │     ├─╴calibration.cr    # Expected calibration error (ECE), reliability bins, temperature scaling, CSV dump
-│     ├─╴featurizer.cr     # `Decision` record + `Featurizer`: signed hashed bag-of-words over (state, question, criteria)
+│     ├─╴featurizer.cr     # `Decision` record + `Featurizer`: signed hashed bag-of-words; structured JSON state + field refs
 │     ├─╴mat.cr            # Minimal dense matrix (`Mat`): vector products, outer-product accumulation
 │     ├─╴optimizer.cr      # `Adam` over the policy parameters (mutable learning rate)
 │     ├─╴policy.cr         # `Policy`: 1-hidden-layer MLP (or linear head with `hidden_dim = 0`), softmax over options, categorical sampling, JSON save/load
 │     ├─╴scoring.cr        # `ScoringRule::LogScore` / `ScoringRule::Brier`, exact logit gradients
+│     ├─╴system_one.cr     # `Primitive` / `Question` + `SystemOne`: many typed questions against one state
 │     ├─╴task.cr           # `SyntheticTask`: class-conditional Gaussians with irreducible noise — verifiable labels, nontrivial Bayes error
-│     ├─╴tasks.cr          # `NoulTask` (binary yes/no) + `IntentTask` (multi-class intent): realistic, seeded, verifiable tasks
+│     ├─╴tasks.cr          # `NoulTask` (yes/no) + `IntentTask` (choice) + `ScoreTask` (ordered levels)
 │     ╰─╴trainer.cr        # `Trainer`: reward computation, optional GRPO-style policy-gradient term, mini-batch gradient accumulation, LR decay, backprop
 ╰─╴spec/
    ╰─╴rlcd_spec.cr
@@ -52,16 +59,16 @@ crystal build --release -o bin/rlcd src/main.cr   # mkdir -p bin first
 ./bin/rlcd
 ```
 
-Options: `--task synthetic|yesno|intent`, `--epochs`, `--lr`, `--lr-decay` (linear decay
-fraction), `--batch` (mini-batch size), `--noise`, `--scoring log|brier`, `--lambda`
+Options: `--task synthetic|yesno|intent|score`, `--epochs`, `--lr`, `--lr-decay` (linear
+decay fraction), `--batch` (mini-batch size), `--noise`, `--scoring log|brier`, `--lambda`
 (proper-scoring reward weight), `--pg-weight` (sampled-correctness policy-gradient weight,
 for comparison), `--group` (GRPO group size), `--train-size`, `--val-size`, `--test-size`,
 `--feat-dim` (featurizer dimension for the text tasks), `--seed`, `--hidden` (`0` = linear
 head), `--calibrate` (fit temperature on validation split), `--cal-csv PATH` (dump reliability
 bins), `--save PATH`, `--load PATH`.
 
-The `yesno` and `intent` tasks run the pipeline end-to-end over natural language: a
-`Featurizer` turns each `(state, question, criteria)` triple into a fixed-size vector, and
+The `yesno`, `intent`, and `score` tasks run the pipeline end-to-end over natural language:
+a `Featurizer` turns each `(state, question, criteria)` triple into a fixed-size vector, and
 the same `Policy`/`Trainer`/ECE machinery learns calibrated predictions against the known
 labels.
 
@@ -86,35 +93,51 @@ the proper-scoring-rule model's confidence tracks its actual hit rate.
 ```crystal
 require "rlcd"
 
-policy  = Rlcd::Policy.new(input_dim: 16, hidden_dim: 32, option_count: 4, rng: Random.new(42))
-trainer = Rlcd::Trainer.new(policy: policy, scoring: Rlcd::ScoringRule::LogScore, batch_size: 32)
+policy  = RLCD::Policy.new(input_dim: 16, hidden_dim: 32, option_count: 4, rng: Random.new(42))
+trainer = RLCD::Trainer.new(policy: policy, scoring: RLCD::ScoringRule::LogScore, batch_size: 32)
 trainer.train(examples, epochs: 200) { |stats| puts stats }
 
 probs = policy.probs(features)                       # => [0.7, 0.1, 0.15, 0.05]
-ece, bins = Rlcd.ece(predictions)                    # predictions: Array({Array(Float64), Int32})
+ece, bins = RLCD.ece(predictions)                    # predictions: Array({Array(Float64), Int32})
 
-featurizer = Rlcd::Featurizer.new(dim: 128)
+featurizer = RLCD::Featurizer.new(dim: 128)
 features   = featurizer.features(state, question, criteria)
 
-yesno_task = Rlcd::NoulTask.new(seed: 42_u64)
-intent_task = Rlcd::IntentTask.new(seed: 42_u64)
+yesno_task  = RLCD::NoulTask.new(seed: 42_u64)
+intent_task = RLCD::IntentTask.new(seed: 42_u64)
+score_task  = RLCD::ScoreTask.new(seed: 42_u64)      # ordered levels (ordinal)
 
-yesno_task = Rlcd::NoulTask.new(seed: 42_u64, curated: [{"custom escalation", 1}, {"custom non-escalation", 0}])
-intent_task = Rlcd::IntentTask.new(seed: 42_u64, curated: [{"custom intent", 2}])
+yesno_task  = RLCD::NoulTask.new(seed: 42_u64, curated: [{"custom escalation", 1}, {"custom non-escalation", 0}])
+intent_task = RLCD::IntentTask.new(seed: 42_u64, curated: [{"custom intent", 2}])
 
-t = Rlcd.fit_temperature(logits, labels)             # temperature scaling on a validation split
-scaled = Rlcd.temperature_probs(logits, t)
+conf  = RLCD.confidence(probs)                       # (p_max - 1/n) / (1 - 1/n)
+pos   = RLCD.expected_score(probs)                   # probability-weighted level
+sconf = RLCD.score_confidence(probs)                 # ordinal peakedness
+
+sys = RLCD::SystemOne.new(featurizer, {2 => yesno_policy, 4 => choice_policy})
+answers = sys.answer(state, [
+  RLCD::Question.new("refund", RLCD::Primitive::Noul, "does it request a refund?", ["no", "yes"]),
+  RLCD::Question.new("team", RLCD::Primitive::Choice, "which team?", ["billing", "technical", "sales"]),
+])
+
+t = RLCD.fit_temperature(logits, labels)             # temperature scaling on a validation split
+scaled = RLCD.temperature_probs(logits, t)
 
 policy.save("model.json")
-loaded = Rlcd::Policy.load("model.json")
+loaded = RLCD::Policy.load("model.json")
 ```
 
-`Rlcd::Example` is a `record Example, features : Array(Float64), label : Int32`. For the
+`RLCD::Example` is a `record Example, features : Array(Float64), label : Int32`. For the
 synthetic task the features are raw Gaussian vectors; for the text tasks they come from a
-`Featurizer` over `(state, question, criteria)` (`Rlcd::Decision`). Everything downstream of
-the features is shared. `NoulTask` and `IntentTask` seed their generated examples with a
-small `curated` list; pass your own via `curated:` to use domain-specific examples instead
-of the built-in support-desk defaults.
+`Featurizer` over `(state, question, criteria)` (`RLCD::Decision`). Everything downstream of
+the features is shared. `NoulTask` (yes/no), `IntentTask` (choice), and `ScoreTask` (ordered
+levels) mirror Jev's `noul`/`choice`/`score` primitives, and each seeds its generated
+examples with a small `curated` list; pass your own via `curated:`.
+
+`Featurizer` also accepts a structured JSON `state` and resolves backtick field references in
+the question and criteria (`` `ticket.messages[0].text` ``). `SystemOne` bundles many typed
+questions against one state into a single call, dispatching each to the policy whose option
+count matches its criteria.
 
 ## Development
 
