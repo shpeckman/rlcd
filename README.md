@@ -99,6 +99,9 @@ features   = featurizer.features(state, question, criteria)
 yesno_task = Rlcd::NoulTask.new(seed: 42_u64)
 intent_task = Rlcd::IntentTask.new(seed: 42_u64)
 
+yesno_task = Rlcd::NoulTask.new(seed: 42_u64, curated: [{"custom escalation", 1}, {"custom non-escalation", 0}])
+intent_task = Rlcd::IntentTask.new(seed: 42_u64, curated: [{"custom intent", 2}])
+
 t = Rlcd.fit_temperature(logits, labels)             # temperature scaling on a validation split
 scaled = Rlcd.temperature_probs(logits, t)
 
@@ -109,7 +112,9 @@ loaded = Rlcd::Policy.load("model.json")
 `Rlcd::Example` is a `record Example, features : Array(Float64), label : Int32`. For the
 synthetic task the features are raw Gaussian vectors; for the text tasks they come from a
 `Featurizer` over `(state, question, criteria)` (`Rlcd::Decision`). Everything downstream of
-the features is shared.
+the features is shared. `NoulTask` and `IntentTask` seed their generated examples with a
+small `curated` list; pass your own via `curated:` to use domain-specific examples instead
+of the built-in support-desk defaults.
 
 ## Development
 

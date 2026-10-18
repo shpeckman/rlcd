@@ -388,3 +388,22 @@ describe "Rlcd.ece edge cases" do
     bin.accuracy.should be_close(1.0, 1e-9)
   end
 end
+
+describe "task curated injection" do
+  it "NoulTask accepts injected curated examples" do
+    custom = [{"custom escalation", 1}, {"custom non-escalation", 0}]
+    task = Rlcd::NoulTask.new(dim: 32, seed: 42_u64, curated: custom)
+    exs  = task.examples
+    exs.size.should eq(custom.size + 1600)
+    exs[0].label.should eq(1)
+    exs[1].label.should eq(0)
+  end
+
+  it "IntentTask accepts injected curated examples" do
+    custom = [{"custom intent", 2}]
+    task = Rlcd::IntentTask.new(dim: 32, seed: 42_u64, curated: custom)
+    exs  = task.examples
+    exs.size.should eq(custom.size + 1600)
+    exs[0].label.should eq(2)
+  end
+end
