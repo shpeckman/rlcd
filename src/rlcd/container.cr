@@ -8,7 +8,7 @@ module RLCD
     VERSION    = 1_u8
     BIG_ENDIAN = 0x01_u8
     TAG_SIZE   = 4
-    TAG        = {featurizer: "FEAT", labels: "LABL", temperature: "TEMP", policy: "POLY", optimizer: "ADAM"}
+    TAG        = {featurizer: "FEAT", labels: "LABL", temperature: "TEMP", policy: "POLY", optimizer: "ADAM", checkpoint: "CKPT"}
 
     class Writer
       getter chunks = [] of {String, IO::Memory}

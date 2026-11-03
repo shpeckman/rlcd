@@ -6,8 +6,11 @@ module RLCD
 
   class Trainer
     getter optimizer : Adam
+    getter epoch     : Int32 = 0
+    getter seed      : UInt64?
 
     @lr      : Float64
+    @epochs  : Int32 = 0
     @dlogits : Array(Float64)
     @sgrad   : Array(Float64)
     @dh      : Array(Float64)
@@ -27,6 +30,7 @@ module RLCD
       @lr_decay            : Float64     = 0.0,
       @rng                 : Random      = Random.new,
       optimizer            : Adam?       = nil,
+      @seed                : UInt64?     = nil,
     )
       if optimizer && !optimizer.policy.same?(@policy)
         raise ArgumentError.new("optimizer belongs to a different policy")
@@ -49,19 +53,37 @@ module RLCD
       end
     end
 
-    def train(examples : Array(Example), epochs : Int32, & : Stats ->) : Nil
-      epochs.times do |epoch|
-        apply_lr_decay(epoch + 1, epochs)
-        yield train_epoch(examples, epoch + 1)
+    def train(examples : Array(Example), epochs : Int32, start : Int32 = 0, & : Stats ->) : Nil
+      raise ArgumentError.new("start #{start} is outside 0..#{epochs}") unless 0 <= start <= epochs
+      @epoch  = start
+      @epochs = epochs
+      (start + 1).upto(epochs) do |epoch|
+        apply_lr_decay(epoch, epochs)
+        stats  = train_epoch(examples, epoch)
+        @epoch = epoch
+        yield stats
       end
     end
 
-    def train(examples : Array(Example), epochs : Int32) : Nil
-      train(examples, epochs) { }
+    def train(examples : Array(Example), epochs : Int32, start : Int32 = 0) : Nil
+      train(examples, epochs, start) { }
+    end
+
+    def train(examples : Array(Example), checkpoint : Checkpoint, epochs : Int32 = checkpoint.epochs, & : Stats ->) : Nil
+      raise ArgumentError.new("checkpoint seed #{checkpoint.seed.inspect} differs from trainer seed #{@seed.inspect}") unless checkpoint.seed == @seed
+      train(examples, epochs, checkpoint.epoch) { |stats| yield stats }
+    end
+
+    def train(examples : Array(Example), checkpoint : Checkpoint, epochs : Int32 = checkpoint.epochs) : Nil
+      train(examples, checkpoint, epochs) { }
+    end
+
+    def checkpoint : Checkpoint
+      Checkpoint.new(@epoch, @epochs, @seed)
     end
 
     def train_epoch(examples : Array(Example), epoch : Int32 = 0) : Stats
-      shuffled    = examples.shuffle(@rng)
+      shuffled    = examples.shuffle(epoch_rng(epoch))
       correct     = 0
       reward_sum  = 0.0
       score_sum   = 0.0
@@ -155,6 +177,10 @@ module RLCD
         @policy.hidden_dim.times { |i| acc[1][i] += @dz1[i] }
         @policy.option_count.times { |i| acc[3][i] += dlogits[i] }
       end
+    end
+
+    private def epoch_rng(epoch : Int32) : Random
+      (seed = @seed) ? Random::PCG32.new(seed, epoch.to_u64) : @rng
     end
 
     private def apply_lr_decay(epoch : Int32, total : Int32) : Nil

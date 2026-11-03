@@ -39,6 +39,7 @@ rlcd/
 │  ╰─╴rlcd/
 │     ├─╴answer.cr         # NoulAnswer / ChoiceAnswer / ScoreAnswer + confidence & score helpers
 │     ├─╴calibration.cr    # Expected calibration error (ECE), reliability bins, temperature scaling, CSV dump
+│     ├─╴checkpoint.cr     # `Checkpoint`: completed epoch, planned epochs and shuffle seed of a training run
 │     ├─╴checksum.cr       # `Checksum`: pure-Crystal CRC-32 IO wrapper for the binary format
 │     ├─╴container.cr      # `Container`: binary header, tagged chunks, CRC-32 trailer
 │     ├─╴featurizer.cr     # `Decision` + hashed words; opt-in code symbols/n-grams; JSON state + field refs; JSON/binary codec
@@ -52,7 +53,7 @@ rlcd/
 │     ├─╴system_one.cr     # `Primitive` / `Question` + `SystemOne`: many typed questions against one state
 │     ├─╴task.cr           # `SyntheticTask`: class-conditional Gaussians with irreducible noise — verifiable labels, nontrivial Bayes error
 │     ├─╴tasks.cr          # `NoulTask` (yes/no) + `IntentTask` (choice) + `ScoreTask` (ordered levels)
-│     ╰─╴trainer.cr        # `Trainer`: reward computation, optional GRPO-style policy-gradient term, mini-batch gradient accumulation, LR decay, backprop
+│     ╰─╴trainer.cr        # `Trainer`: reward computation, optional GRPO-style policy-gradient term, mini-batch gradient accumulation, LR decay, backprop, seeded epochs and resume
 ╰─╴spec/
    ╰─╴rlcd_spec.cr
 ```
@@ -145,6 +146,15 @@ model.save("languages.rlcd", precision: RLCD::Precision::I8)
 
 resumed = RLCD::Model.load("languages.rlcd")
 RLCD::Trainer.new(policy: resumed.policy, optimizer: resumed.optimizer).train(more_examples, 50)
+
+trainer = RLCD::Trainer.new(policy: policy, seed: 7_u64)       # reproducible epochs, resumable
+trainer.train(examples, 30) do |stats|
+  RLCD::Model.new(featurizer, policy, labels, optimizer: trainer.optimizer,
+                  checkpoint: trainer.checkpoint).save("run.rlcd") # atomic
+end
+run = RLCD::Model.load("run.rlcd")
+RLCD::Trainer.new(policy: run.policy, optimizer: run.optimizer, seed: 7_u64)
+  .train(examples, run.checkpoint.not_nil!)                     # epochs after the saved one
 ```
 
 `RLCD::Example` is a `record Example, features : Array(Float64), label : Int32`. For the
@@ -185,7 +195,7 @@ wrap the IO in `Compress::Gzip::Writer`/`Reader`, or read bundled bytes through
 `IO::Memory`.
 
 A `Model` bundles the `Featurizer` configuration (`dim`, `seed`, `code`), the `Policy`, one
-label per option, the fitted temperature, and optionally the `Adam` state (step count,
+label per option, the fitted temperature, optionally a `Checkpoint`, and optionally the `Adam` state (step count,
 learning rate, betas, epsilon, first and second moments). `Model#probs` applies the
 temperature; `Model#predict` pairs labels with probabilities, most likely first. Passing a
 loaded `optimizer` to `Trainer.new` resumes training exactly where it stopped. The trainer
@@ -210,6 +220,7 @@ trailer: CRC-32 u32 over everything before it
 | `TEMP` | temperature f64                                                                 |
 | `POLY` | `input_dim`, `hidden_dim`, `option_count` i32, precision u8, tensors            |
 | `ADAM` | `t` i32, `lr`, `beta1`, `beta2`, `eps` f64, precision u8, `m` tensors, `v` tensors |
+| `CKPT` | `epoch` i32, `epochs` i32, seed flag u8, `seed` u64                              |
 
 Tensors follow `Policy#layout` (`w1`, `b1`, `w2`, `b2`, or `w2`, `b2` for a linear head),
 row-major. `F64` and `F32` store raw floats; `I8` stores per row a `Float32` scale
@@ -228,6 +239,23 @@ Sizes for a code-mode language model (dim 4096, linear head, 32 labels, 131 k we
 | F64    | 1.05 MB      | 3.15 MB              |
 | F32    | 525 KB       | 1.57 MB              |
 | I8     | 132 KB       | 1.18 MB              |
+
+## Checkpoints
+
+A `Trainer` created with `seed:` shuffles epoch *n* with `Random::PCG32.new(seed, n)`, so an epoch's order depends only
+on the seed and its number, not on the trainer's `rng` or on earlier epochs. `train(examples, epochs, start:)` runs
+epochs `start + 1` to `epochs`, and learning-rate decay follows the absolute epoch, so a resumed run continues the
+schedule. `Trainer#epoch` is the last completed epoch and `Trainer#checkpoint` returns a `Checkpoint` (`epoch`,
+`epochs`, `seed`, `finished?`).
+
+A `Model` built with `optimizer:` and `checkpoint:` holds everything a resume needs. JSON stores it under
+`"checkpoint"`, and the binary format stores it in a `CKPT` chunk (epoch i32, epochs i32, seed flag u8, seed u64).
+`trainer.train(examples, checkpoint)` checks that the seed matches and continues after `checkpoint.epoch`; pass
+`epochs:` to extend the run. With the same examples, seed and settings, a resumed run reaches exactly the weights of an
+uninterrupted one. Checkpoints are taken between epochs: an interrupted epoch is repeated.
+
+`save` writes to a temporary file next to the target, `fsync`s it and renames it over the target, so a crash or
+power loss during a save leaves the previous file intact.
 
 ## Development
 

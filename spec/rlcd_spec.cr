@@ -745,3 +745,79 @@ describe "RLCD::Trainer optimizer" do
     RLCD::Trainer.new(policy: policy, optimizer: adam, lr: 0.01).optimizer.lr.should eq(0.01)
   end
 end
+
+private def checkpoint_examples : Array(RLCD::Example)
+  RLCD::SyntheticTask.new(input_dim: 6, class_count: 3, noise: 0.8, rng: Random.new(60)).generate(120)
+end
+
+private def checkpoint_trainer(policy : RLCD::Policy, optimizer : RLCD::Adam? = nil, seed : UInt64? = 61_u64, rng : Random = Random.new) : RLCD::Trainer
+  RLCD::Trainer.new(policy: policy, lr: 0.02, lr_decay: 0.5, rng: rng, optimizer: optimizer, seed: seed)
+end
+
+describe RLCD::Checkpoint do
+  it "round-trips inside a model, JSON and binary" do
+    policy = spec_policy(8)
+    model  = RLCD::Model.new(RLCD::Featurizer.new(dim: 6), policy, ["a", "b", "c"], checkpoint: RLCD::Checkpoint.new(3, 10, 99_u64))
+    RLCD::Model.from_json(model.to_json).checkpoint.should eq(model.checkpoint)
+    RLCD::Model.from_io(IO::Memory.new(binary(model))).checkpoint.should eq(model.checkpoint)
+    unseeded = RLCD::Model.new(RLCD::Featurizer.new(dim: 6), policy, ["a", "b", "c"], checkpoint: RLCD::Checkpoint.new(10, 10, nil))
+    RLCD::Model.from_io(IO::Memory.new(binary(unseeded))).checkpoint.not_nil!.finished?.should be_true
+    RLCD::Model.from_json(RLCD::Model.new(RLCD::Featurizer.new(dim: 6), policy, ["a", "b", "c"]).to_json).checkpoint.should be_nil
+  end
+
+  it "rejects an epoch outside the run" do
+    expect_raises(RLCD::FormatError, /outside 0..4/) { RLCD::Checkpoint.from_json(%({"epoch": 5, "epochs": 4, "seed": null})) }
+  end
+end
+
+describe "RLCD::Trainer checkpoints" do
+  it "shuffles identically for the same seed, whatever the trainer rng" do
+    a = spec_policy(4, 62)
+    b = spec_policy(4, 62)
+    checkpoint_trainer(a, rng: Random.new(1)).train(checkpoint_examples, 3)
+    checkpoint_trainer(b, rng: Random.new(2)).train(checkpoint_examples, 3)
+    max_param_delta(a, b).should eq(0.0)
+  end
+
+  it "resumes an interrupted run to the same weights, learning-rate decay included" do
+    straight = spec_policy(4, 63)
+    checkpoint_trainer(straight).train(checkpoint_examples, 6)
+
+    policy  = spec_policy(4, 63)
+    trainer = checkpoint_trainer(policy)
+    trainer.train(checkpoint_examples, 6) { |stats| break if stats.epoch == 3 }
+    trainer.checkpoint.should eq(RLCD::Checkpoint.new(3, 6, 61_u64))
+    path = File.tempname("rlcd_spec_checkpoint", ".rlcd")
+    RLCD::Model.new(RLCD::Featurizer.new(dim: 6), policy, ["a", "b", "c"], optimizer: trainer.optimizer, checkpoint: trainer.checkpoint).save(path)
+    saved = RLCD::Model.load(path)
+    File.delete(path)
+
+    resumed = checkpoint_trainer(saved.policy, saved.optimizer)
+    epochs  = [] of Int32
+    resumed.train(checkpoint_examples, saved.checkpoint.not_nil!) { |stats| epochs << stats.epoch }
+    epochs.should eq([4, 5, 6])
+    resumed.checkpoint.finished?.should be_true
+    max_param_delta(straight, saved.policy).should eq(0.0)
+  end
+
+  it "rejects a start outside the run and a checkpoint of another seed" do
+    trainer = checkpoint_trainer(spec_policy(4))
+    expect_raises(ArgumentError, /outside 0..3/) { trainer.train(checkpoint_examples, 3, start: 4) }
+    expect_raises(ArgumentError, /seed/) { trainer.train(checkpoint_examples, RLCD::Checkpoint.new(1, 3, 7_u64)) }
+  end
+end
+
+describe "RLCD::Persistent#save" do
+  it "replaces the file atomically and leaves no temporary file" do
+    directory = File.tempname("rlcd_spec_save")
+    Dir.mkdir(directory)
+    path = File.join(directory, "model.rlcd")
+    File.write(path, "old")
+    policy = spec_policy(8)
+    policy.save(path)
+    Dir.children(directory).should eq(["model.rlcd"])
+    max_param_delta(policy, RLCD::Policy.load(path)).should eq(0.0)
+    File.delete(path)
+    Dir.delete(directory)
+  end
+end
