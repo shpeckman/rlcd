@@ -7,7 +7,7 @@ module RLCD
   class Featurizer
     getter dim : Int32
 
-    def initialize(@dim : Int32 = 128, @seed : UInt64 = 0xcbf29ce484222325_u64)
+    def initialize(@dim : Int32 = 128, @seed : UInt64 = 0xcbf29ce484222325_u64, @code : Bool = false)
       raise ArgumentError.new("dim must be positive") if @dim <= 0
     end
 
@@ -17,9 +17,9 @@ module RLCD
 
     def features(state : String, question : String, criteria : String) : Array(Float64)
       vec = Array(Float64).new(@dim, 0.0)
-      tokenize(state).each { |t| add_token(vec, t, 0_u64) }
-      tokenize(question).each { |t| add_token(vec, t, 1_u64) }
-      tokenize(criteria).each { |t| add_token(vec, t, 2_u64) }
+      tokens_for(state).each { |t| add_token(vec, t, 0_u64) }
+      tokens_for(question).each { |t| add_token(vec, t, 1_u64) }
+      tokens_for(criteria).each { |t| add_token(vec, t, 2_u64) }
       norm = Math.sqrt(vec.sum { |v| v * v })
       norm > 1e-12 ? vec.map { |v| v / norm } : vec
     end
@@ -28,13 +28,38 @@ module RLCD
       features(flatten_json(state), resolve_refs(question, state), resolve_refs(criteria, state))
     end
 
+    private def tokens_for(text : String) : Array(String)
+      @code ? code_tokenize(text) : tokenize(text)
+    end
+
     private def tokenize(text : String) : Array(String)
       text.downcase.split(/[^a-z0-9]+/).reject { |t| t.size < 2 }
     end
 
+    private def code_tokenize(text : String) : Array(String)
+      return [] of String if text.empty?
+
+      normalized = text.downcase.gsub(/\r\n?/, "\n")
+      tokens = tokenize(normalized).map { |t| "w:#{t}" }
+      normalized.scan(/[^\p{L}\p{N}\s]+/) do |match|
+        run = match[0]
+        tokens << "r:#{run}"
+        run.each_char { |char| tokens << "s:#{char}" }
+      end
+
+      chars = "\u0002#{normalized}\u0003".chars
+      (2..5).each do |n|
+        next if chars.size < n
+        (0..chars.size - n).each do |i|
+          tokens << "c#{n}:#{chars[i, n].join}"
+        end
+      end
+      tokens
+    end
+
     private def add_token(vec : Array(Float64), token : String, field : UInt64) : Nil
-      h    = hash_token(field, token)
-      idx  = (h % @dim.to_u64).to_i
+      h = hash_token(field, token)
+      idx = (h % @dim.to_u64).to_i
       sign = ((h >> 63) & 1_u64) == 1_u64 ? -1.0 : 1.0
       vec[idx] += sign
     end
@@ -63,13 +88,13 @@ module RLCD
 
     private def resolve_refs(text : String, state : JSON::Any) : String
       builder = String::Builder.new
-      pos     = 0
+      pos = 0
       text.scan(/`[^`]+`/) do |m|
         start_i = m.begin(0)
-        end_i   = m.end(0)
+        end_i = m.end(0)
         builder << text[pos...start_i]
-        inner   = text[(start_i + 1)...(end_i - 1)]
-        value   = resolve_path(state, inner)
+        inner = text[(start_i + 1)...(end_i - 1)]
+        value = resolve_path(state, inner)
         builder << (value ? flatten_json(value) : text[start_i...end_i])
         pos = end_i
       end

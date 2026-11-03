@@ -39,7 +39,7 @@ rlcd/
 │  ╰─╴rlcd/
 │     ├─╴answer.cr         # NoulAnswer / ChoiceAnswer / ScoreAnswer + confidence & score helpers
 │     ├─╴calibration.cr    # Expected calibration error (ECE), reliability bins, temperature scaling, CSV dump
-│     ├─╴featurizer.cr     # `Decision` record + `Featurizer`: signed hashed bag-of-words; structured JSON state + field refs
+│     ├─╴featurizer.cr     # `Decision` + hashed words; opt-in code symbols/n-grams; JSON state + field refs
 │     ├─╴mat.cr            # Minimal dense matrix (`Mat`): vector products, outer-product accumulation
 │     ├─╴optimizer.cr      # `Adam` over the policy parameters (mutable learning rate)
 │     ├─╴policy.cr         # `Policy`: 1-hidden-layer MLP (or linear head with `hidden_dim = 0`), softmax over options, categorical sampling, JSON save/load
@@ -103,6 +103,11 @@ ece, bins = RLCD.ece(predictions)                    # predictions: Array({Array
 featurizer = RLCD::Featurizer.new(dim: 128)
 features   = featurizer.features(state, question, criteria)
 
+code_featurizer = RLCD::Featurizer.new(dim: 2048, seed: 42_u64, code: true)
+code_examples = labeled_snippets.map do |snippet, label|
+  RLCD::Example.new(code_featurizer.features(snippet, "Which programming language?", ""), label)
+end
+
 yesno_task  = RLCD::NoulTask.new(seed: 42_u64)
 intent_task = RLCD::IntentTask.new(seed: 42_u64)
 score_task  = RLCD::ScoreTask.new(seed: 42_u64)      # ordered levels (ordinal)
@@ -133,6 +138,12 @@ synthetic task the features are raw Gaussian vectors; for the text tasks they co
 the features is shared. `NoulTask` (yes/no), `IntentTask` (choice), and `ScoreTask` (ordered
 levels) mirror Jev's `noul`/`choice`/`score` primitives, and each seeds its generated
 examples with a small `curated` list; pass your own via `curated:`.
+
+`code: true` retains word tokens and adds individual symbols, contiguous symbol runs, and
+downcased Unicode character 2–5-grams with whitespace and snippet boundaries. Use it for
+source snippets and increase `dim` to reduce hash collisions. Reuse the same seed and `code`
+setting for training and inference; saved policy JSON contains weights, not featurizer
+configuration.
 
 `Featurizer` also accepts a structured JSON `state` and resolves backtick field references in
 the question and criteria (`` `ticket.messages[0].text` ``). `SystemOne` bundles many typed
