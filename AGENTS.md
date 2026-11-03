@@ -24,7 +24,8 @@ Brier) as the reward against verifiable ground-truth labels. Zero dependencies.
 - `src/rlcd/calibration.cr` — `RLCD.ece` + `Bin` reliability table, `RLCD.fit_temperature` /
   `RLCD.temperature_probs`, `RLCD.write_bins_csv`
 - `src/rlcd/featurizer.cr` — `Decision` record + `Featurizer` signed hashed bag-of-words
-  over (state, question, criteria); structured JSON state + backtick field references
+  over (state, question, criteria); opt-in `code: true` symbols and character 2–5-grams;
+  structured JSON state + backtick field references
 - `src/rlcd/system_one.cr` — `Primitive` enum, `Question` record, `SystemOne` (many typed
   questions answered against one state)
 - `src/rlcd/task.cr` — `SyntheticTask` Gaussian classification with irreducible noise
