@@ -20,7 +20,9 @@ Brier) as the reward against verifiable ground-truth labels. Zero dependencies.
 - `src/rlcd/scoring.cr` — `ScoringRule` enum, `RLCD.score`, `RLCD.score_grad_logits`
 - `src/rlcd/trainer.cr` — `Trainer`: proper-score reward + optional GRPO policy-gradient
   term (`pg_weight`), mini-batch gradient accumulation, linear LR decay, backprop, optional
-  `optimizer:` to resume, `Example` / `Stats` records
+  `optimizer:` to resume, `seed:` for per-epoch shuffling, `train(…, start:)` / `train(…, checkpoint)`,
+  `epoch` / `checkpoint`, `Example` / `Stats` records
+- `src/rlcd/checkpoint.cr` — `Checkpoint` record (epoch, epochs, seed; `finished?`), JSON/binary codec
 - `src/rlcd/optimizer.cr` — `Adam` (operates on `policy.param_slices`, mutable `lr`, bound
   `policy`, step count `t`, moments `m`/`v`), JSON/binary codec
 - `src/rlcd/calibration.cr` — `RLCD.ece` + `Bin` reliability table, `RLCD.fit_temperature` /
@@ -28,15 +30,15 @@ Brier) as the reward against verifiable ground-truth labels. Zero dependencies.
 - `src/rlcd/featurizer.cr` — `Decision` record + `Featurizer` signed hashed bag-of-words
   over (state, question, criteria); opt-in `code: true` symbols and character 2–5-grams;
   structured JSON state + backtick field references; JSON/binary codec
-- `src/rlcd/model.cr` — `Model`: featurizer + policy + labels + temperature + optional `Adam`;
+- `src/rlcd/model.cr` — `Model`: featurizer + policy + labels + temperature + optional `Adam` + optional `Checkpoint`;
   `probs` / `predict`; JSON/binary codec over the container chunks
 - `src/rlcd/format.cr` — `FormatError`, `Layout` alias, `Format` (JSON / binary, `from_path`,
   `detect`), `Precision` (F64 / F32 / I8 tensor codec, `moment_precision`)
 - `src/rlcd/container.cr` — `Container`: binary header, `TAG` table, `Writer`, `Chunks`
   (`decode` / `decode?` check that each payload is consumed exactly), CRC-32 trailer
 - `src/rlcd/checksum.cr` — `Checksum`: pure-Crystal CRC-32 IO wrapper (no zlib, no FFI)
-- `src/rlcd/persistent.cr` — `Persistent` mixin: `save(path, format, precision)` and
-  `self.load(path, rng)` for `Policy` and `Model`
+- `src/rlcd/persistent.cr` — `Persistent` mixin: `save(path, format, precision)` (atomic: temp file, fsync,
+  rename) and `self.load(path, rng)` for `Policy` and `Model`
 - `src/rlcd/system_one.cr` — `Primitive` enum, `Question` record, `SystemOne` (many typed
   questions answered against one state)
 - `src/rlcd/task.cr` — `SyntheticTask` Gaussian classification with irreducible noise
@@ -88,5 +90,8 @@ mkdir -p bin && crystal build --release -o bin/rlcd src/main.cr
 - The writer records byte order in the header flags, and readers follow the flags; the
   `IO::ByteFormat` passed to `from_io` is not used for decoding. `save` always writes
   little-endian.
+- Seeded epochs: epoch *n* shuffles with `Random::PCG32.new(seed, n)`, never with state carried between epochs,
+  so resuming from a checkpoint needs no RNG state. LR decay uses the absolute epoch. Keep both properties, or
+  resumed runs stop matching uninterrupted ones (a spec checks this).
 - Optimizer state is bound to one policy (`Adam#policy`); `Trainer` and `Model` reject a
   mismatch. Moments are stored at `Precision#moment_precision`, never I8.

@@ -1,5 +1,6 @@
 # src/rlcd/model.cr
 require "json"
+require "./checkpoint"
 require "./container"
 require "./featurizer"
 require "./format"
@@ -16,8 +17,10 @@ module RLCD
     getter labels      : Array(String)
     getter temperature : Float64
     getter optimizer   : Adam?
+    getter checkpoint  : Checkpoint?
 
-    def initialize(@featurizer : Featurizer, @policy : Policy, @labels : Array(String), @temperature : Float64 = 1.0, @optimizer : Adam? = nil)
+    def initialize(@featurizer : Featurizer, @policy : Policy, @labels : Array(String), @temperature : Float64 = 1.0,
+                   @optimizer : Adam? = nil, @checkpoint : Checkpoint? = nil)
       raise ArgumentError.new("featurizer dim #{@featurizer.dim} does not match policy input_dim #{@policy.input_dim}") unless @featurizer.dim == @policy.input_dim
       raise ArgumentError.new("#{@labels.size} labels for #{@policy.option_count} policy options") unless @labels.size == @policy.option_count
       raise ArgumentError.new("temperature must be positive and finite, got #{@temperature}") unless @temperature.finite? && @temperature > 0.0
@@ -32,6 +35,7 @@ module RLCD
       labels      = nil.as(Array(String)?)
       temperature = nil.as(Float64?)
       optimizer   = nil.as(String?)
+      checkpoint  = nil.as(Checkpoint?)
       pull.read_object do |key|
         case key
         when "featurizer"  then featurizer = Featurizer.new(pull)
@@ -39,6 +43,7 @@ module RLCD
         when "labels"      then labels = Array(String).new(pull)
         when "temperature" then temperature = Float64.new(pull)
         when "optimizer"   then optimizer = pull.read_raw
+        when "checkpoint"  then checkpoint = Checkpoint.new(pull)
         else                    pull.skip
         end
       end
@@ -50,6 +55,7 @@ module RLCD
         labels || raise(FormatError.new("model is missing labels")),
         temperature || raise(FormatError.new("model is missing temperature")),
         optimizer.try { |raw| Adam.new(policy, JSON::PullParser.new(raw)) },
+        checkpoint,
       )
     end
 
@@ -63,6 +69,7 @@ module RLCD
         chunks.decode(Container::TAG[:labels]) { |payload| decode_labels(payload, order) },
         chunks.decode(Container::TAG[:temperature]) { |payload| payload.read_bytes(Float64, order) },
         chunks.decode?(Container::TAG[:optimizer]) { |payload| Adam.decode(policy, payload, order) },
+        chunks.decode?(Container::TAG[:checkpoint]) { |payload| Checkpoint.decode(payload, order) },
       )
     end
 
@@ -97,6 +104,9 @@ module RLCD
         if adam = @optimizer
           json.field "optimizer", adam
         end
+        if checkpoint = @checkpoint
+          json.field "checkpoint", checkpoint
+        end
       end
     end
 
@@ -114,6 +124,9 @@ module RLCD
         writer.add(Container::TAG[:policy]) { |payload| @policy.encode(payload, format, precision) }
         if adam = @optimizer
           writer.add(Container::TAG[:optimizer]) { |payload| adam.encode(payload, format, precision) }
+        end
+        if checkpoint = @checkpoint
+          writer.add(Container::TAG[:checkpoint]) { |payload| checkpoint.encode(payload, format) }
         end
       end
     end
