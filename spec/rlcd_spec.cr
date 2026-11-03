@@ -534,3 +534,214 @@ describe RLCD::SystemOne do
     expect_raises(ArgumentError) { sys.answer("state", qs) }
   end
 end
+
+private def spec_policy(hidden : Int32, seed : Int32 = 80) : RLCD::Policy
+  RLCD::Policy.new(input_dim: 6, hidden_dim: hidden, option_count: 3, rng: Random.new(seed))
+end
+
+private def spec_model(optimizer : Bool = false) : RLCD::Model
+  featurizer = RLCD::Featurizer.new(dim: 64, seed: 0xcbf29ce484222325_u64, code: true)
+  policy     = RLCD::Policy.new(input_dim: 64, hidden_dim: 8, option_count: 3, rng: Random.new(81))
+  examples   = [{"def add(a, b)\n  a + b\nend", 0}, {"fn add(a: i32) -> i32 { a }", 1}, {"{\"a\": [1, 2]}", 2}].map do |(text, label)|
+    RLCD::Example.new(featurizer.features(text, "", ""), label)
+  end
+  trainer = RLCD::Trainer.new(policy: policy, rng: Random.new(82))
+  trainer.train(examples, 5)
+  RLCD::Model.new(featurizer, policy, ["crystal", "rust", "json"], temperature: 1.5, optimizer: optimizer ? trainer.optimizer : nil)
+end
+
+private def binary(value, precision : RLCD::Precision = RLCD::Precision::F64, format : IO::ByteFormat = IO::ByteFormat::LittleEndian) : Bytes
+  io = IO::Memory.new
+  value.to_io(io, format, precision)
+  io.to_slice
+end
+
+private def max_param_delta(a : RLCD::Policy, b : RLCD::Policy) : Float64
+  delta = 0.0
+  a.param_slices.each_with_index do |slice, i|
+    other = b.param_slices[i]
+    slice.size.times { |j| delta = {delta, (slice[j] - other[j]).abs}.max }
+  end
+  delta
+end
+
+describe RLCD::Checksum do
+  it "computes the standard CRC-32 check value" do
+    sum = RLCD::Checksum.new(IO::Memory.new)
+    sum.write("123456789".to_slice)
+    sum.value.should eq(0xCBF43926_u32)
+  end
+end
+
+describe "RLCD::Policy serialization" do
+  it "round-trips JSON exactly for MLP and linear heads" do
+    {8, 0}.each do |hidden|
+      policy = spec_policy(hidden)
+      max_param_delta(policy, RLCD::Policy.from_json(policy.to_json)).should eq(0.0)
+    end
+  end
+
+  it "loads JSON written with empty w1/b1 for a linear head" do
+    json = %({"input_dim": 2, "hidden_dim": 0, "option_count": 2, "w1": [], "b1": [], "w2": [1.0, 2.0, 3.0, 4.0], "b2": [0.5, -0.5]})
+    RLCD::Policy.from_json(json).param_slices.map(&.to_a).should eq([[1.0, 2.0, 3.0, 4.0], [0.5, -0.5]])
+  end
+
+  it "round-trips binary F64 exactly in both byte orders" do
+    {IO::ByteFormat::LittleEndian, IO::ByteFormat::BigEndian}.each do |format|
+      {8, 0}.each do |hidden|
+        policy = spec_policy(hidden)
+        io     = IO::Memory.new
+        io.write_bytes(policy, format)
+        io.rewind
+        max_param_delta(policy, io.read_bytes(RLCD::Policy)).should eq(0.0)
+      end
+    end
+  end
+
+  it "shrinks with lower precision while keeping predictions close" do
+    policy = spec_policy(8)
+    x      = [0.3, -0.1, 0.8, 0.0, -0.6, 0.2]
+    sizes  = {RLCD::Precision::F64, RLCD::Precision::F32, RLCD::Precision::I8}.map do |precision|
+      bytes  = binary(policy, precision)
+      loaded = RLCD::Policy.from_io(IO::Memory.new(bytes))
+      tolerance = precision.i8? ? 0.05 : (precision.f32? ? 1e-6 : 0.0)
+      max_param_delta(policy, loaded).should be <= tolerance
+      policy.probs(x).zip(loaded.probs(x)) { |a, b| b.should be_close(a, 0.02) }
+      bytes.size
+    end
+    sizes[0].should be > sizes[1]
+    sizes[1].should be > sizes[2]
+  end
+
+  it "saves by extension and detects the format on load" do
+    policy = spec_policy(8)
+    {".json" => '{'.ord, ".rlcd" => 'R'.ord}.each do |extension, first|
+      path = File.tempname("rlcd_spec", extension)
+      policy.save(path)
+      File.open(path) { |file| file.read_byte.should eq(first) }
+      max_param_delta(policy, RLCD::Policy.load(path)).should eq(0.0)
+      File.delete(path)
+    end
+  end
+
+  it "rejects a non-F64 precision for JSON" do
+    expect_raises(ArgumentError, /binary format only/) do
+      spec_policy(8).save(File.tempname("rlcd_spec", ".json"), precision: RLCD::Precision::F32)
+    end
+  end
+end
+
+describe "RLCD binary container errors" do
+  it "rejects corrupted bytes with a checksum mismatch" do
+    bytes = binary(spec_policy(8)).dup
+    bytes[40] ^= 0xFF_u8
+    expect_raises(RLCD::FormatError, /checksum mismatch/) { RLCD::Policy.from_io(IO::Memory.new(bytes)) }
+  end
+
+  it "rejects truncated input" do
+    bytes = binary(spec_policy(8))
+    expect_raises(RLCD::FormatError, /truncated/) { RLCD::Policy.from_io(IO::Memory.new(bytes[0, bytes.size - 10])) }
+  end
+
+  it "rejects huge declared dimensions before allocating" do
+    io = IO::Memory.new
+    RLCD::Container.write(io, IO::ByteFormat::LittleEndian) do |writer|
+      writer.add(RLCD::Container::TAG[:policy]) do |payload|
+        {40_000, 40_000, 2}.each { |dim| payload.write_bytes(dim, IO::ByteFormat::LittleEndian) }
+        payload.write_byte(0_u8)
+      end
+    end
+    io.rewind
+    expect_raises(RLCD::FormatError, /policy weights holds 0 bytes/) { RLCD::Policy.from_io(io) }
+  end
+
+  it "reports a missing chunk" do
+    expect_raises(RLCD::FormatError, /missing FEAT chunk/) { RLCD::Model.from_io(IO::Memory.new(binary(spec_policy(8)))) }
+  end
+
+  it "rejects unrecognized input" do
+    expect_raises(RLCD::FormatError, /unrecognized model format/) { RLCD::Format.detect("model".to_slice) }
+  end
+end
+
+describe RLCD::Model do
+  it "validates that its parts fit together" do
+    featurizer = RLCD::Featurizer.new(dim: 6)
+    expect_raises(ArgumentError, /labels/) { RLCD::Model.new(featurizer, spec_policy(8), ["a", "b"]) }
+    expect_raises(ArgumentError, /input_dim/) { RLCD::Model.new(RLCD::Featurizer.new(dim: 7), spec_policy(8), ["a", "b", "c"]) }
+    expect_raises(ArgumentError, /temperature/) { RLCD::Model.new(featurizer, spec_policy(8), ["a", "b", "c"], temperature: 0.0) }
+    expect_raises(ArgumentError, /different policy/) do
+      RLCD::Model.new(featurizer, spec_policy(8), ["a", "b", "c"], optimizer: RLCD::Adam.new(spec_policy(8)))
+    end
+  end
+
+  it "predicts labels sorted by temperature-scaled probability" do
+    model     = spec_model
+    predicted = model.predict("def add(a, b)\n  a + b\nend")
+    predicted.map(&.[1]).should eq(predicted.map(&.[1]).sort.reverse)
+    predicted.sum(&.[1]).should be_close(1.0, 1e-9)
+    predicted.first[0].should eq("crystal")
+  end
+
+  it "round-trips JSON and every binary precision" do
+    model = spec_model(optimizer: true)
+    text  = "fn main() -> i32 { 0 }"
+    json  = RLCD::Model.from_json(model.to_json)
+    json.labels.should eq(model.labels)
+    json.featurizer.seed.should eq(model.featurizer.seed)
+    json.featurizer.code?.should be_true
+    json.probs(text).should eq(model.probs(text))
+    json.optimizer.not_nil!.t.should eq(model.optimizer.not_nil!.t)
+
+    RLCD::Precision.each do |precision|
+      loaded = RLCD::Model.from_io(IO::Memory.new(binary(model, precision)))
+      loaded.temperature.should eq(1.5)
+      loaded.optimizer.not_nil!.t.should eq(model.optimizer.not_nil!.t)
+      model.probs(text).zip(loaded.probs(text)) { |a, b| b.should be_close(a, precision.f64? ? 0.0 : 0.02) }
+    end
+  end
+
+  it "loads a model file as a policy" do
+    model = spec_model
+    max_param_delta(model.policy, RLCD::Policy.from_io(IO::Memory.new(binary(model)))).should eq(0.0)
+  end
+
+  it "resumes training identically from saved optimizer state" do
+    model    = spec_model(optimizer: true)
+    examples = [{"puts 1", 0}, {"let x = 1;", 1}, {"[1, 2]", 2}].map do |(text, label)|
+      RLCD::Example.new(model.featurizer.features(text, "", ""), label)
+    end
+    {RLCD::Format::Json, RLCD::Format::Binary}.each do |format|
+      original = spec_model(optimizer: true)
+      path     = File.tempname("rlcd_spec", format.json? ? ".json" : ".rlcd")
+      original.save(path)
+      loaded = RLCD::Model.load(path)
+      File.delete(path)
+
+      RLCD::Trainer.new(policy: original.policy, optimizer: original.optimizer, rng: Random.new(90)).train(examples, 3)
+      RLCD::Trainer.new(policy: loaded.policy, optimizer: loaded.optimizer, rng: Random.new(90)).train(examples, 3)
+      max_param_delta(original.policy, loaded.policy).should eq(0.0)
+    end
+
+    fresh = spec_model(optimizer: true)
+    reset = RLCD::Model.from_io(IO::Memory.new(binary(fresh)))
+    RLCD::Trainer.new(policy: fresh.policy, optimizer: fresh.optimizer, rng: Random.new(90)).train(examples, 3)
+    RLCD::Trainer.new(policy: reset.policy, rng: Random.new(90)).train(examples, 3)
+    max_param_delta(fresh.policy, reset.policy).should be > 0.0
+  end
+end
+
+describe "RLCD::Trainer optimizer" do
+  it "rejects an optimizer bound to another policy" do
+    expect_raises(ArgumentError, /different policy/) do
+      RLCD::Trainer.new(policy: spec_policy(8), optimizer: RLCD::Adam.new(spec_policy(8)))
+    end
+  end
+
+  it "keeps the optimizer learning rate unless one is given" do
+    policy = spec_policy(8)
+    adam   = RLCD::Adam.new(policy, lr: 0.02)
+    RLCD::Trainer.new(policy: policy, optimizer: adam).optimizer.lr.should eq(0.02)
+    RLCD::Trainer.new(policy: policy, optimizer: adam, lr: 0.01).optimizer.lr.should eq(0.01)
+  end
+end
