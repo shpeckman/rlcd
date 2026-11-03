@@ -5,6 +5,9 @@ module RLCD
   record Stats, epoch : Int32, accuracy : Float64, mean_reward : Float64, mean_score : Float64
 
   class Trainer
+    getter optimizer : Adam
+
+    @lr      : Float64
     @dlogits : Array(Float64)
     @sgrad   : Array(Float64)
     @dh      : Array(Float64)
@@ -14,7 +17,7 @@ module RLCD
 
     def initialize(
       @policy              : Policy,
-      @lr                  : Float64     = 0.005,
+      lr                   : Float64?    = nil,
       @group_size          : Int32       = 8,
       @scoring             : ScoringRule = ScoringRule::Brier,
       @calibration_weight  : Float64     = 1.0,
@@ -23,8 +26,14 @@ module RLCD
       @batch_size          : Int32       = 32,
       @lr_decay            : Float64     = 0.0,
       @rng                 : Random      = Random.new,
+      optimizer            : Adam?       = nil,
     )
-      @adam = Adam.new(@policy, lr: @lr)
+      if optimizer && !optimizer.policy.same?(@policy)
+        raise ArgumentError.new("optimizer belongs to a different policy")
+      end
+      @lr           = lr || optimizer.try(&.lr) || 0.005
+      @optimizer    = optimizer || Adam.new(@policy, lr: @lr)
+      @optimizer.lr = @lr
       @dlogits = Array(Float64).new(@policy.option_count, 0.0)
       @sgrad   = Array(Float64).new(@policy.option_count, 0.0)
       if @policy.hidden_dim == 0
@@ -105,7 +114,7 @@ module RLCD
         batch_count += 1
 
         if batch_count >= @batch_size
-          @adam.step!(acc.map { |a| Slice(Float64).new(a.to_unsafe, a.size) })
+          @optimizer.step!(acc.map { |a| Slice(Float64).new(a.to_unsafe, a.size) })
           acc.each { |a| a.fill(0.0) }
           batch_count = 0
         end
@@ -114,7 +123,7 @@ module RLCD
       end
 
       if batch_count > 0
-        @adam.step!(acc.map { |a| Slice(Float64).new(a.to_unsafe, a.size) })
+        @optimizer.step!(acc.map { |a| Slice(Float64).new(a.to_unsafe, a.size) })
       end
 
       Stats.new(
@@ -151,7 +160,7 @@ module RLCD
     private def apply_lr_decay(epoch : Int32, total : Int32) : Nil
       return if @lr_decay <= 0.0 || total <= 1
       frac = (epoch - 1).to_f / (total - 1).to_f
-      @adam.lr = @lr * (1.0 - @lr_decay * frac)
+      @optimizer.lr = @lr * (1.0 - @lr_decay * frac)
     end
   end
 end

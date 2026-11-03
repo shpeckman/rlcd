@@ -1,10 +1,16 @@
 # src/rlcd/policy.cr
 require "json"
+require "./container"
+require "./format"
+require "./mat"
+require "./persistent"
 
 module RLCD
   record Forward, hidden : Array(Float64), logits : Array(Float64), probs : Array(Float64)
 
   class Policy
+    include Persistent
+
     getter input_dim    : Int32
     getter hidden_dim   : Int32
     getter option_count : Int32
@@ -14,9 +20,9 @@ module RLCD
     getter b2           : Array(Float64)
 
     def initialize(@input_dim : Int32, @hidden_dim : Int32, @option_count : Int32, @rng : Random = Random.new)
-      raise ArgumentError.new("input_dim must be positive") if @input_dim <= 0
-      raise ArgumentError.new("option_count must be at least 2") if @option_count < 2
-      raise ArgumentError.new("hidden_dim must be non-negative") if @hidden_dim < 0
+      if message = Policy.shape_error(@input_dim, @hidden_dim, @option_count)
+        raise ArgumentError.new(message)
+      end
       if @hidden_dim == 0
         @w1 = Mat.new(0, @input_dim)
         @b1 = Array(Float64).new(0)
@@ -27,6 +33,89 @@ module RLCD
         @w2 = Mat.random(@option_count, @hidden_dim, @rng)
       end
       @b2 = Array(Float64).new(@option_count, 0.0)
+    end
+
+    def self.new(pull : JSON::PullParser, rng : Random = Random.new) : Policy
+      input_dim    = nil.as(Int32?)
+      hidden_dim   = nil.as(Int32?)
+      option_count = nil.as(Int32?)
+      arrays       = {} of String => Array(Float64)
+      pull.read_object do |key|
+        case key
+        when "input_dim"    then input_dim = Int32.new(pull)
+        when "hidden_dim"   then hidden_dim = Int32.new(pull)
+        when "option_count" then option_count = Int32.new(pull)
+        else
+          if pull.kind.begin_array?
+            arrays[key] = Array(Float64).new(pull)
+          else
+            pull.skip
+          end
+        end
+      end
+
+      input   = input_dim || raise FormatError.new("policy is missing input_dim")
+      hidden  = hidden_dim || raise FormatError.new("policy is missing hidden_dim")
+      options = option_count || raise FormatError.new("policy is missing option_count")
+      check_shape(input, hidden, options)
+      layout = layout(input, hidden, options)
+      layout.each do |(name, rows, cols)|
+        size = (arrays[name]? || raise FormatError.new("policy is missing #{name}")).size
+        raise FormatError.new("saved weights length #{size} does not match expected #{rows * cols} for #{name}") unless size == rows * cols
+      end
+
+      policy = new(input, hidden, options, rng)
+      slices = policy.param_slices
+      layout.each_with_index do |(name, _, _), i|
+        slice = slices[i]
+        arrays[name].each_with_index { |value, j| slice[j] = value }
+      end
+      policy
+    end
+
+    def self.from_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::LittleEndian, rng : Random = Random.new) : Policy
+      chunks = Container.read(io)
+      chunks.decode(Container::TAG[:policy]) { |payload| decode(payload, chunks.format, rng) }
+    end
+
+    def self.decode(io : IO::Memory, format : IO::ByteFormat, rng : Random = Random.new) : Policy
+      input_dim    = io.read_bytes(Int32, format)
+      hidden_dim   = io.read_bytes(Int32, format)
+      option_count = io.read_bytes(Int32, format)
+      precision    = io.read_bytes(Precision, format)
+      check_shape(input_dim, hidden_dim, option_count)
+      layout = layout(input_dim, hidden_dim, option_count)
+      Container.expect_remaining(io, precision.layout_bytes(layout), "policy weights")
+
+      policy = new(input_dim, hidden_dim, option_count, rng)
+      slices = policy.param_slices
+      layout.each_with_index { |(_, _, cols), i| precision.decode(io, slices[i], cols, format) }
+      policy
+    end
+
+    def self.shape_error(input_dim : Int32, hidden_dim : Int32, option_count : Int32) : String?
+      return "input_dim must be positive" if input_dim <= 0
+      return "option_count must be at least 2" if option_count < 2
+      return "hidden_dim must be non-negative" if hidden_dim < 0
+      "a weight tensor exceeds #{Int32::MAX} values" if layout(input_dim, hidden_dim, option_count).any? { |(_, rows, cols)| rows.to_i64 * cols > Int32::MAX }
+    end
+
+    def self.layout(input_dim : Int32, hidden_dim : Int32, option_count : Int32) : Layout
+      if hidden_dim == 0
+        [{"w2", option_count, input_dim}, {"b2", 1, option_count}]
+      else
+        [{"w1", hidden_dim, input_dim}, {"b1", 1, hidden_dim}, {"w2", option_count, hidden_dim}, {"b2", 1, option_count}]
+      end
+    end
+
+    private def self.check_shape(input_dim : Int32, hidden_dim : Int32, option_count : Int32) : Nil
+      if message = shape_error(input_dim, hidden_dim, option_count)
+        raise FormatError.new(message)
+      end
+    end
+
+    def layout : Layout
+      Policy.layout(@input_dim, @hidden_dim, @option_count)
     end
 
     def forward(x : Array(Float64)) : Forward
@@ -58,37 +147,31 @@ module RLCD
       end
     end
 
-    def save(path : String) : Nil
-      JSON.build(File.open(path, "w")) do |json|
-        json.object do
-          json.field "input_dim", @input_dim
-          json.field "hidden_dim", @hidden_dim
-          json.field "option_count", @option_count
-          json.field "w1", @w1.data.to_a
-          json.field "b1", @b1
-          json.field "w2", @w2.data.to_a
-          json.field "b2", @b2
+    def to_json(json : JSON::Builder) : Nil
+      slices = param_slices
+      json.object do
+        json.field "input_dim", @input_dim
+        json.field "hidden_dim", @hidden_dim
+        json.field "option_count", @option_count
+        layout.each_with_index do |(name, _, _), i|
+          json.field(name) { json.array { slices[i].each { |value| json.number(value) } } }
         end
       end
     end
 
-    def self.load(path : String, rng : Random = Random.new) : Policy
-      data         = JSON.parse(File.read(path))
-      input_dim    = data["input_dim"].as_i.to_i32
-      hidden_dim   = data["hidden_dim"].as_i.to_i32
-      option_count = data["option_count"].as_i.to_i32
-      policy       = new(input_dim, hidden_dim, option_count, rng)
-
-      copy = ->(any : JSON::Any, slice : Slice(Float64)) do
-        vals = any.as_a
-        raise ArgumentError.new("saved weights length #{vals.size} does not match expected #{slice.size}") if vals.size != slice.size
-        slice.size.times { |i| slice[i] = vals[i].as_f }
+    def to_io(io : IO, format : IO::ByteFormat = IO::ByteFormat::LittleEndian, precision : Precision = Precision::F64) : Nil
+      Container.write(io, format) do |writer|
+        writer.add(Container::TAG[:policy]) { |payload| encode(payload, format, precision) }
       end
-      copy.call(data["w1"], policy.w1.data)
-      copy.call(data["w2"], policy.w2.data)
-      copy.call(data["b1"], Slice(Float64).new(policy.b1.to_unsafe, policy.b1.size))
-      copy.call(data["b2"], Slice(Float64).new(policy.b2.to_unsafe, policy.b2.size))
-      policy
+    end
+
+    def encode(io : IO, format : IO::ByteFormat, precision : Precision) : Nil
+      io.write_bytes(@input_dim, format)
+      io.write_bytes(@hidden_dim, format)
+      io.write_bytes(@option_count, format)
+      io.write_bytes(precision, format)
+      slices = param_slices
+      layout.each_with_index { |(_, _, cols), i| precision.encode(io, slices[i], cols, format) }
     end
 
     def softmax(logits : Array(Float64)) : Array(Float64)

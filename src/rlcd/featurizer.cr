@@ -5,10 +5,58 @@ module RLCD
   record Decision, state : String, question : String, criteria : String
 
   class Featurizer
-    getter dim : Int32
+    getter  dim  : Int32
+    getter  seed : UInt64
+    getter? code : Bool
 
     def initialize(@dim : Int32 = 128, @seed : UInt64 = 0xcbf29ce484222325_u64, @code : Bool = false)
       raise ArgumentError.new("dim must be positive") if @dim <= 0
+    end
+
+    def self.new(pull : JSON::PullParser) : Featurizer
+      dim  = nil.as(Int32?)
+      seed = nil.as(UInt64?)
+      code = nil.as(Bool?)
+      pull.read_object do |key|
+        case key
+        when "dim"  then dim = Int32.new(pull)
+        when "seed" then seed = UInt64.new(pull)
+        when "code" then code = Bool.new(pull)
+        else             pull.skip
+        end
+      end
+      checked(
+        dim || raise(FormatError.new("featurizer is missing dim")),
+        seed || raise(FormatError.new("featurizer is missing seed")),
+        code.nil? ? raise(FormatError.new("featurizer is missing code")) : code,
+      )
+    end
+
+    def self.decode(io : IO::Memory, format : IO::ByteFormat) : Featurizer
+      dim  = io.read_bytes(Int32, format)
+      seed = io.read_bytes(UInt64, format)
+      code = io.read_byte || raise IO::EOFError.new
+      raise FormatError.new("featurizer code flag must be 0 or 1, got #{code}") if code > 1
+      checked(dim, seed, code == 1)
+    end
+
+    private def self.checked(dim : Int32, seed : UInt64, code : Bool) : Featurizer
+      raise FormatError.new("featurizer dim must be positive, got #{dim}") if dim <= 0
+      new(dim, seed, code)
+    end
+
+    def to_json(json : JSON::Builder) : Nil
+      json.object do
+        json.field "dim", @dim
+        json.field "seed", @seed
+        json.field "code", @code
+      end
+    end
+
+    def encode(io : IO, format : IO::ByteFormat) : Nil
+      io.write_bytes(@dim, format)
+      io.write_bytes(@seed, format)
+      io.write_byte(@code ? 1_u8 : 0_u8)
     end
 
     def features(decision : Decision) : Array(Float64)

@@ -45,8 +45,8 @@ OptionParser.parse do |parser|
   end
   parser.on("--calibrate", "Fit temperature on validation split, report ECE before/after") { calibrate = true }
   parser.on("--cal-csv PATH", "Dump reliability bins CSV") { |v| cal_csv = v }
-  parser.on("--save PATH", "Save trained weights to JSON") { |v| save_path = v }
-  parser.on("--load PATH", "Load weights from JSON, skip training") { |v| load_path = v }
+  parser.on("--save PATH", "Save trained weights (.json = JSON, otherwise binary)") { |v| save_path = v }
+  parser.on("--load PATH", "Load weights (JSON or binary, detected), skip training") { |v| load_path = v }
   parser.on("-h", "--help", "Show this help") { puts parser; exit }
 end
 
